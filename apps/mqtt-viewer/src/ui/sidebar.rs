@@ -80,8 +80,7 @@ fn topic(ui: &mut egui::Ui, state: &AppState, node: NodeId, actions: &mut Vec<Ac
                 for (extension, export_format) in [("json", ExportFormat::Json), ("csv", ExportFormat::Csv)] {
                     if ui.button(format!("{label} as {}", extension.to_uppercase())).clicked() {
                         ui.close();
-                        let dialog = rfd::FileDialog::new().set_file_name(format!("export.{extension}"));
-                        if let Some(path) = dialog.add_filter(extension, &[extension]).save_file() {
+                        if let Some(path) = state.files.save(&format!("export.{extension}"), extension, &[extension]) {
                             actions.push(Action::Export { scope, format: export_format, path });
                         }
                     }

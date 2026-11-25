@@ -377,14 +377,15 @@ fn dropping_the_handle_stops_the_worker() {
 }
 
 #[test]
-fn a_broker_that_drops_us_after_connecting_is_backed_off_and_explained() {
-    // The test broker hangs up on `$SYS` subscriptions, like brokers that forbid them.
+fn system_subscriptions_are_given_up_when_the_broker_hangs_up_on_them() {
+    // The test broker hangs up on `$SYS` subscriptions, like brokers that forbid them. That is the default
+    // profile's second subscription, so the default must still end up connected.
     let broker = TestBroker::start();
     let mut client = Client::new();
-    let profile = ConnectionProfile { subscriptions: vec![Subscription::new("$SYS/#")], ..broker.profile() };
+    let profile = ConnectionProfile { subscriptions: ConnectionProfile::default().subscriptions, ..broker.profile() };
     client.send(Command::Connect(Box::new(profile)));
-    let hint = client.wait_error();
-    assert!(hint.contains("$SYS/#"), "{hint}");
+    let notice = client.wait_error();
+    assert!(notice.contains("$SYS/#") && notice.contains("Continuing without"), "{notice}");
     let attempts: Vec<u32> = client
         .log
         .iter()
@@ -392,5 +393,37 @@ fn a_broker_that_drops_us_after_connecting_is_backed_off_and_explained() {
             if let Event::State(ConnectionState::Reconnecting { attempt, .. }) = event { Some(*attempt) } else { None }
         })
         .collect();
-    assert_eq!(attempts, [1, 2], "attempts keep counting up although each connect succeeds: {:?}", client.log);
+    assert_eq!(attempts, [1], "attempts keep counting although each connect succeeds: {:?}", client.log);
+
+    // The next attempt sticks, and the remaining subscription (`#`) delivers.
+    client.send(publish("any/topic", "still here"));
+    assert_eq!(&client.wait_message("any/topic").payload[..], b"still here");
+    let later_drops = client
+        .log
+        .iter()
+        .skip_while(|event| !matches!(event, Event::Error(_)))
+        .filter(|event| matches!(event, Event::State(ConnectionState::Reconnecting { attempt, .. }) if *attempt > 2))
+        .count();
+    assert_eq!(later_drops, 0, "{:?}", client.log);
+}
+
+#[test]
+fn a_broker_that_keeps_dropping_us_is_backed_off_and_explained() {
+    // Accepts every connection (CONNACK, return code 0) and hangs up immediately.
+    let port = refusing_broker(&[0x20, 0x02, 0x00, 0x00]);
+    let mut client = Client::new();
+    client.send(Command::Connect(Box::new(ConnectionProfile { subscriptions: Vec::new(), ..profile_for(port) })));
+    let hint = client.wait_error();
+    assert!(hint.contains("keeps closing the connection"), "{hint}");
+    let attempts: Vec<u32> = client
+        .log
+        .iter()
+        .filter_map(|event| {
+            if let Event::State(ConnectionState::Reconnecting { attempt, .. }) = event { Some(*attempt) } else { None }
+        })
+        .collect();
+    assert_eq!(attempts, [1], "the back-off grows instead of restarting: {:?}", client.log);
+    client.wait("the back-off to keep growing", |event| {
+        matches!(event, Event::State(ConnectionState::Reconnecting { attempt: 3, .. })).then_some(())
+    });
 }

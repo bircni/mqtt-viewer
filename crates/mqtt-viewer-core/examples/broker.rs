@@ -26,7 +26,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         listener("ws.1", "websocket", port + 2),
     );
     println!("MQTT 3.1.1 on 127.0.0.1:{port}, MQTT 5 on :{}, WebSocket on :{}", port + 1, port + 2);
-    println!("Note: this broker drops clients that subscribe to `$SYS/#`; remove that subscription in the profile.");
+    println!(
+        "Note: this broker drops clients that subscribe to `$SYS/#`; the app carries on without that subscription."
+    );
     rumqttd::Broker::new(toml::from_str(&config)?).start()?;
     Ok(())
 }

@@ -2,6 +2,7 @@
 
 mod charts;
 mod dialogs;
+mod native_picker;
 mod sidebar;
 mod theme;
 mod toolbar;
@@ -9,6 +10,7 @@ mod tree;
 
 use eframe::egui::{self, Align2, Key, Panel, RichText};
 
+pub use self::native_picker::NativePicker;
 use crate::state::{Action, AppState, Dialog, Navigate};
 
 /// Draws the whole window.

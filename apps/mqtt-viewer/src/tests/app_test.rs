@@ -55,12 +55,15 @@ fn connect_browse_and_publish_through_the_window() {
         dialog.draft.host = "127.0.0.1".into();
         dialog.draft.port = port;
         dialog.draft.name = "Test broker".into();
-        // The in-process broker hangs up on `$SYS` subscriptions.
-        dialog.draft.subscriptions = vec![mqtt_viewer_core::config::Subscription::new("#")];
+        // The subscriptions stay at the default (`#` and `$SYS/#`). This broker hangs up on `$SYS`
+        // subscriptions, so the test also proves that the default profile recovers from that on its own.
     }
     harness.run_steps(8);
     harness.get_by_label("Connect").click();
-    run_until(&mut harness, "the connection", |state| state.connection == ConnectionState::Connected);
+    run_until(&mut harness, "the `$SYS` subscription to be given up", |state| {
+        state.connection == ConnectionState::Connected
+            && state.notices.iter().any(|notice| notice.text.contains("$SYS/#"))
+    });
     harness.get_by_label("Test broker");
 
     // Publish through the publish panel; the message comes back through the subscription to `#`.

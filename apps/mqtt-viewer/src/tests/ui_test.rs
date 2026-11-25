@@ -6,7 +6,7 @@ use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use mqtt_viewer_core::connection::{Command, ConnectionState, Event};
 use mqtt_viewer_core::tree::TopicTree;
 
-use super::{connect, message, populated, receive, state};
+use super::{FakePicker, connect, message, populated, receive, state};
 use crate::state::{Action, AppState, Dialog, ValueMode};
 
 fn harness(state: AppState) -> Harness<'static, AppState> {
@@ -385,4 +385,197 @@ fn fifty_thousand_topics_do_not_slow_down_a_frame() {
     println!("average frame with {TOPICS} topics: {per_frame:?}");
     // Generous for unoptimised builds and coverage runs; an optimised build takes well under a millisecond.
     assert!(per_frame < std::time::Duration::from_millis(250), "a frame took {per_frame:?}");
+}
+
+/// Runs frames one at a time and returns every text the UI copied to the clipboard meanwhile.
+fn copied(harness: &mut Harness<'static, AppState>) -> Vec<String> {
+    let mut texts = Vec::new();
+    for _ in 0..8 {
+        harness.run_steps(1);
+        for command in &harness.output().platform_output.commands {
+            if let eframe::egui::OutputCommand::CopyText(text) = command {
+                texts.push(text.clone());
+            }
+        }
+    }
+    texts
+}
+
+/// Opens the context menu of the tree row labelled `row` and clicks `entry` in it.
+fn context_menu(harness: &mut Harness<'static, AppState>, row: &str, entry: &str) -> Vec<String> {
+    harness.get_by_label(row).click_secondary();
+    harness.run_steps(8);
+    harness.get_by_label(entry).click();
+    copied(harness)
+}
+
+#[test]
+fn the_context_menu_copies_expands_publishes_and_deletes() {
+    let mut state = populated();
+    let garage = state.tree.find("home/garage").unwrap();
+    state.tree.reveal(garage);
+    state.apply(Action::SetExpanded(garage, true));
+    let mut harness = harness(state);
+
+    assert_eq!(context_menu(&mut harness, "door", "Copy topic"), ["home/garage/door"]);
+    assert_eq!(context_menu(&mut harness, "door", "Copy value"), ["closed"]);
+    context_menu(&mut harness, "door", "Publish to this topic");
+    assert_eq!(harness.state().publish.topic, "home/garage/door");
+
+    context_menu(&mut harness, "garage", "Collapse all below");
+    assert!(harness.query_by_label("door").is_none());
+    context_menu(&mut harness, "home", "Expand all below");
+    harness.get_by_label("door");
+
+    context_menu(&mut harness, "door", "Delete retained message");
+    assert_eq!(harness.state().tree.find("home/garage/door"), None);
+    assert!(
+        matches!(&harness.state_mut().take_commands()[..], [Command::Publish(request)] if request.topic == "home/garage/door")
+    );
+
+    context_menu(&mut harness, "garage", "Delete retained messages below…");
+    assert!(matches!(&harness.state().dialog, Dialog::ConfirmDelete { topics, .. } if topics.len() == 2));
+}
+
+#[test]
+fn the_copy_buttons_put_topic_value_and_history_on_the_clipboard() {
+    let mut state = state();
+    receive(&mut state, &[("a/b", "first"), ("a/b", "second")]);
+    let node = state.tree.find("a/b").unwrap();
+    state.tree.reveal(node);
+    state.apply(Action::Select(Some(node)));
+    let mut harness = harness(state);
+
+    harness.get_by_label("Copy topic").click();
+    assert_eq!(copied(&mut harness), ["a/b"]);
+    // The value panel's button copies the latest payload.
+    harness.get_by_label("Copy").click();
+    assert_eq!(copied(&mut harness), ["second"]);
+
+    click(&mut harness, "History");
+    let buttons: Vec<_> = harness.query_all_by_label("Copy").collect();
+    assert_eq!(buttons.len(), 3, "the value's button plus one per history entry");
+    // History is listed newest first, so the last button belongs to the oldest message.
+    buttons[2].click();
+    assert_eq!(copied(&mut harness), ["first"]);
+}
+
+#[test]
+fn presets_and_sent_messages_load_back_through_their_menus() {
+    let mut state = state();
+    connect(&mut state);
+    state.publish.topic = "cmd/light".into();
+    state.publish.payload = "ON".into();
+    let mut harness = harness(state);
+
+    input(&harness, "Preset name").focus();
+    harness.run_steps(2);
+    input(&harness, "Preset name").type_text("light on");
+    harness.run_steps(2);
+    click(&mut harness, "Save preset");
+    assert_eq!(harness.state().config.publish_presets[0].name, "light on");
+    click(&mut harness, "Publish");
+    harness.state_mut().take_commands();
+
+    // Change the form, then bring both back through the menus.
+    harness.state_mut().publish.topic = "something/else".into();
+    harness.state_mut().publish.payload = "OFF".into();
+    harness.run_steps(2);
+    click(&mut harness, "Presets");
+    click(&mut harness, "light on");
+    assert_eq!((harness.state().publish.topic.as_str(), harness.state().publish.payload.as_str()), ("cmd/light", "ON"));
+
+    harness.state_mut().publish.payload = "changed".into();
+    harness.run_steps(2);
+    click(&mut harness, "Sent");
+    click(&mut harness, "cmd/light  ON");
+    assert_eq!(harness.state().publish.payload, "ON");
+
+    // Deleting a preset from the menu.
+    click(&mut harness, "Presets");
+    harness.get_all_by_label("×").last().unwrap().click();
+    harness.run_steps(8);
+    assert_eq!(harness.state().config.publish_presets.len(), 0);
+}
+
+#[test]
+fn file_dialogs_drive_recording_replay_and_export() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = state();
+    connect(&mut state);
+    state.files = Box::new(FakePicker(Some(directory.path().to_path_buf())));
+    let mut harness = harness(state);
+
+    // Record: the save dialog's answer becomes the recording file.
+    click(&mut harness, "Record");
+    let recording = directory.path().join("recording.jsonl");
+    assert_eq!(harness.state().recording().map(|(path, _)| path.to_path_buf()), Some(recording.clone()));
+    receive(harness.state_mut(), &[("a/b", "1"), ("a/b", "2"), ("a/c", "3")]);
+    harness.run_steps(2);
+    click(&mut harness, "Stop recording (3)");
+    assert!(harness.state().recording().is_none());
+
+    // Replay: the open dialog's answer is loaded into the replay dialog.
+    harness.state_mut().files = Box::new(FakePicker(Some(recording)));
+    click(&mut harness, "Replay…");
+    assert!(matches!(&harness.state().dialog, Dialog::Replay(dialog) if dialog.messages.len() == 3));
+    click(&mut harness, "Cancel");
+
+    // Export: every scope and format from the menu ends up in the chosen folder.
+    harness.state_mut().files = Box::new(FakePicker(Some(directory.path().to_path_buf())));
+    let node = harness.state().tree.find("a/b");
+    harness.state_mut().apply(Action::Select(node));
+    harness.run_steps(2);
+    click(&mut harness, "Export…");
+    click(&mut harness, "History as CSV");
+    let csv = std::fs::read_to_string(directory.path().join("export.csv")).unwrap();
+    assert_eq!(csv.lines().count(), 3, "header and two history entries: {csv}");
+    click(&mut harness, "Export…");
+    click(&mut harness, "Latest value as JSON");
+    let json = std::fs::read_to_string(directory.path().join("export.json")).unwrap();
+    assert!(json.contains("\"payload\": \"2\""), "{json}");
+}
+
+#[test]
+fn cancelled_file_dialogs_change_nothing() {
+    let mut state = populated();
+    let node = state.tree.find("home");
+    state.apply(Action::Select(node));
+    let mut harness = harness(state);
+    click(&mut harness, "Record");
+    assert!(harness.state().recording().is_none());
+    click(&mut harness, "Replay…");
+    assert_eq!(harness.state().dialog, Dialog::None);
+    click(&mut harness, "Export…");
+    click(&mut harness, "Subtree values as JSON");
+    assert_eq!(harness.state().notices.len(), 0);
+}
+
+#[test]
+fn file_dialogs_choose_certificates_and_schemas() {
+    let directory = tempfile::tempdir().unwrap();
+    let proto = directory.path().join("reading.proto");
+    std::fs::write(&proto, "syntax = \"proto3\";\npackage acme;\nmessage Reading { double value = 1; }\n").unwrap();
+
+    let mut state = state();
+    state.files = Box::new(FakePicker(Some(proto.clone())));
+    state.apply(Action::OpenSettings);
+    let mut harness = harness(state);
+    click(&mut harness, "Add .proto file…");
+    assert_eq!(harness.state().config.proto_files, [proto]);
+    assert_eq!(harness.state().decoder.registry().message_types(), ["acme.Reading"]);
+
+    // Certificates in the connection dialog.
+    let certificate = directory.path().join("ca.pem");
+    harness.state_mut().files = Box::new(FakePicker(Some(certificate.clone())));
+    harness.state_mut().apply(Action::OpenConnectDialog);
+    if let Dialog::Connect(dialog) = &mut harness.state_mut().dialog {
+        dialog.draft.transport = mqtt_viewer_core::config::Transport::Tls;
+    }
+    harness.run_steps(8);
+    click(&mut harness, "Subscriptions");
+    click(&mut harness, "Choose CA certificate");
+    let Dialog::Connect(dialog) = &harness.state().dialog else { panic!("dialog closed") };
+    assert_eq!(dialog.draft.ca_file.as_ref(), Some(&certificate));
+    harness.get_by_label(certificate.display().to_string().as_str());
 }

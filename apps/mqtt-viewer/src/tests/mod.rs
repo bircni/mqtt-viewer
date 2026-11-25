@@ -16,11 +16,28 @@ use mqtt_viewer_core::message::Message;
 
 use crate::state::{Action, AppState};
 
+/// A file picker that answers every dialog with the same path, or cancels.
+#[derive(Debug)]
+pub struct FakePicker(pub Option<std::path::PathBuf>);
+
+impl crate::picker::FilePicker for FakePicker {
+    fn open(&self, _kind: &str, _extensions: &[&str]) -> Option<std::path::PathBuf> {
+        self.0.clone()
+    }
+
+    fn save(&self, default_name: &str, _kind: &str, _extensions: &[&str]) -> Option<std::path::PathBuf> {
+        // Like a user who accepts the suggested name inside the chosen folder.
+        self.0.as_ref().map(|folder| folder.join(default_name))
+    }
+}
+
 /// A state that persists nothing.
 pub fn state() -> AppState {
     let mut state = AppState::new(AppConfig::default(), None, None);
     // Tests read the rows right after delivering messages and expect them to be current.
     state.tree.set_refresh_interval(std::time::Duration::ZERO);
+    // No test may open a real dialog: it would block forever waiting for a person.
+    state.files = Box::new(FakePicker(None));
     state
 }
 

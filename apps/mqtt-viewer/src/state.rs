@@ -23,6 +23,7 @@ use mqtt_viewer_core::tree::{Filter, HistoryLimits, NodeId, TopicTree};
 
 use crate::chart::Chart;
 use crate::forms::PublishForm;
+use crate::picker::FilePicker;
 
 /// Messages buffered while paused before the oldest are dropped.
 pub const MAX_HELD: usize = 200_000;
@@ -326,6 +327,8 @@ pub struct AppState {
     rate: RateMeter,
     store: Option<StoreWriter>,
     pending_deletes: HashSet<String>,
+    /// How the user is asked for files.
+    pub files: Box<dyn FilePicker>,
     /// Set when the selection moved by keyboard, so the tree scrolls it into view once.
     pub reveal_selection: bool,
     commands: Vec<Command>,
@@ -363,6 +366,7 @@ impl AppState {
             rate: RateMeter::default(),
             store: None,
             pending_deletes: HashSet::new(),
+            files: Box::new(crate::ui::NativePicker),
             reveal_selection: false,
             commands: Vec::new(),
         };

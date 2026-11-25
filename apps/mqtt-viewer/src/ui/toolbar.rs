@@ -87,8 +87,7 @@ fn recording(ui: &mut egui::Ui, state: &AppState, actions: &mut Vec<Action>, pal
             actions.push(Action::StopRecording);
         }
     } else if ui.button("Record").on_hover_text("Record received messages to a file").clicked()
-        && let Some(path) =
-            rfd::FileDialog::new().set_file_name("recording.jsonl").add_filter("Recording", &["jsonl"]).save_file()
+        && let Some(path) = state.files.save("recording.jsonl", "Recording", &["jsonl"])
     {
         actions.push(Action::StartRecording(path));
     }
@@ -97,7 +96,7 @@ fn recording(ui: &mut egui::Ui, state: &AppState, actions: &mut Vec<Action>, pal
             actions.push(Action::StopReplay);
         }
     } else if ui.button("Replay…").on_hover_text("Publish a recording to the connected broker").clicked()
-        && let Some(path) = rfd::FileDialog::new().add_filter("Recording", &["jsonl"]).pick_file()
+        && let Some(path) = state.files.open("Recording", &["jsonl"])
     {
         actions.push(Action::LoadRecording(path));
     }

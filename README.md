@@ -8,7 +8,8 @@ It speaks MQTT 3.1.1 and 5, decodes binary payloads and records and replays sess
 
 - **Connections**: saved profiles; `mqtt://`, `mqtts://`, `ws://` and `wss://`; MQTT 3.1.1 and 5; user name and
   password, client ID, keep-alive, clean session, last will, a subscription list with QoS per entry; custom CA,
-  client certificate and key, optional certificate validation; automatic reconnect with back-off.
+  client certificate and key, optional certificate validation; automatic reconnect with back-off. Brokers that
+  hang up on `$SYS` subscriptions are handled by dropping those for the session.
 - **Topic tree**: collapsible hierarchy with message and subtopic counts, an inline value preview and a flash when
   a message arrives. Ordering by name, message count or topic count. Keyboard navigation, pause/resume, and a
   context menu to copy, publish to, expand or delete. Only visible rows are laid out, so 50 000 topics at
@@ -54,8 +55,9 @@ cargo run -p mqtt-viewer-core --example broker            # MQTT on 127.0.0.1:18
 cargo run --release -p mqtt-viewer-core --example flood   # 50 000 topics at 5 000 msg/s for 30 s
 ```
 
-That broker closes connections that subscribe to `$SYS/#`, so remove that entry from the profile's subscriptions
-when you connect to it. It exists for testing; use a real broker such as Mosquitto for anything else.
+That broker closes connections that subscribe to `$SYS/#`. The app notices, carries on without that subscription
+and tells you; removing the entry from the profile avoids the two-second delay. The broker exists for testing; use
+a real one such as Mosquitto for anything else.
 
 ## Configuration
 

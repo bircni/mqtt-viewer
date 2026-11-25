@@ -9,6 +9,7 @@ pub mod format;
 pub mod forms;
 pub mod highlight;
 pub mod icon;
+pub mod picker;
 pub mod state;
 pub mod ui;
 

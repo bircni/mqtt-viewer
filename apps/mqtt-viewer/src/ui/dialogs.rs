@@ -9,6 +9,7 @@ use mqtt_viewer_core::message::QoS;
 use mqtt_viewer_core::record;
 
 use super::theme::Palette;
+use crate::picker::FilePicker;
 use crate::state::{Action, AppState, ConnectDialog, Dialog, ReplayDialog};
 
 /// Height of the connection dialog's two-column body.
@@ -76,7 +77,7 @@ fn connect_dialog(ui: &mut egui::Ui, state: &AppState, dialog: &mut ConnectDialo
         ui.separator();
         ui.vertical(|ui| {
             ScrollArea::vertical().id_salt("profile").max_height(BODY_HEIGHT).auto_shrink(false).show(ui, |ui| {
-                profile_form(ui, &mut dialog.draft, &mut dialog.show_password);
+                profile_form(ui, state.files.as_ref(), &mut dialog.draft, &mut dialog.show_password);
             });
         });
     });
@@ -98,7 +99,7 @@ fn connect_dialog(ui: &mut egui::Ui, state: &AppState, dialog: &mut ConnectDialo
     });
 }
 
-fn profile_form(ui: &mut egui::Ui, draft: &mut ConnectionProfile, show_password: &mut bool) {
+fn profile_form(ui: &mut egui::Ui, files: &dyn FilePicker, draft: &mut ConnectionProfile, show_password: &mut bool) {
     egui::Grid::new("profile-grid").num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
         ui.label("Name");
         ui.add(TextEdit::singleline(&mut draft.name).desired_width(320.0)).accessible_name("Name");
@@ -156,7 +157,7 @@ fn profile_form(ui: &mut egui::Ui, draft: &mut ConnectionProfile, show_password:
 
     session_section(ui, draft);
     subscriptions_section(ui, draft);
-    tls_section(ui, draft);
+    tls_section(ui, files, draft);
     will_section(ui, draft);
 }
 
@@ -211,7 +212,7 @@ fn subscriptions_section(ui: &mut egui::Ui, draft: &mut ConnectionProfile) {
     });
 }
 
-fn tls_section(ui: &mut egui::Ui, draft: &mut ConnectionProfile) {
+fn tls_section(ui: &mut egui::Ui, files: &dyn FilePicker, draft: &mut ConnectionProfile) {
     if draft.transport.is_tls() {
         CollapsingHeader::new("TLS").default_open(true).show(ui, |ui| {
             ui.checkbox(&mut draft.validate_certificate, "Validate the server certificate");
@@ -221,9 +222,9 @@ fn tls_section(ui: &mut egui::Ui, draft: &mut ConnectionProfile) {
                         .color(Palette::of(ui).warn),
                 );
             }
-            file_field(ui, "CA certificate", &mut draft.ca_file);
-            file_field(ui, "Client certificate", &mut draft.client_cert_file);
-            file_field(ui, "Client key", &mut draft.client_key_file);
+            file_field(ui, files, "CA certificate", &mut draft.ca_file);
+            file_field(ui, files, "Client certificate", &mut draft.client_cert_file);
+            file_field(ui, files, "Client key", &mut draft.client_key_file);
         });
     }
 }
@@ -271,7 +272,7 @@ fn optional_number<N: egui::emath::Numeric>(ui: &mut egui::Ui, name: &str, value
     });
 }
 
-fn file_field(ui: &mut egui::Ui, label: &str, file: &mut Option<std::path::PathBuf>) {
+fn file_field(ui: &mut egui::Ui, files: &dyn FilePicker, label: &str, file: &mut Option<std::path::PathBuf>) {
     ui.horizontal(|ui| {
         ui.label(label);
         match file {
@@ -285,8 +286,8 @@ fn file_field(ui: &mut egui::Ui, label: &str, file: &mut Option<std::path::PathB
                 ui.weak("none");
             }
         }
-        if ui.small_button("Choose…").clicked()
-            && let Some(path) = rfd::FileDialog::new().add_filter("PEM", &["pem", "crt", "cer", "key"]).pick_file()
+        if ui.small_button("Choose…").accessible_name(format!("Choose {label}")).clicked()
+            && let Some(path) = files.open("PEM", &["pem", "crt", "cer", "key"])
         {
             *file = Some(path);
         }
@@ -392,7 +393,7 @@ fn protobuf_settings(ui: &mut egui::Ui, state: &AppState, actions: &mut Vec<Acti
         });
     }
     if ui.button("Add .proto file…").clicked()
-        && let Some(path) = rfd::FileDialog::new().add_filter("Protobuf", &["proto"]).pick_file()
+        && let Some(path) = state.files.open("Protobuf", &["proto"])
     {
         actions.push(Action::AddProtoFile(path));
     }

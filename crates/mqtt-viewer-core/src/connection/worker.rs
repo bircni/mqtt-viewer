@@ -27,10 +27,11 @@ const BACKOFF_START: Duration = Duration::from_millis(500);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
 /// A connection that survives this long resets the back-off.
 const STABLE_AFTER: Duration = Duration::from_secs(5);
-/// Consecutive short-lived connections after which the user gets a hint.
-const FLAPPING_HINT_AFTER: u32 = 3;
+/// Every this many consecutive short-lived connections the worker reacts: first by giving up `$` subscriptions,
+/// then by telling the user.
+const FLAPPING_AFTER: u32 = 2;
 const FLAPPING_HINT: &str = "The broker keeps closing the connection right after accepting it. It may be rejecting \
-                             one of the subscriptions (often `$SYS/#`) or another client may be using the same client ID.";
+                             one of the subscriptions or another client may be using the same client ID.";
 
 /// Delivers events to the consumer and wakes it up.
 pub(super) struct EventSink {
@@ -56,7 +57,12 @@ enum SessionEvent {
     Connected,
     Message(Message),
     Warning(String),
-    Retrying { attempt: u32, error: String },
+    /// The broker accepted the connection and dropped it right away, several times in a row.
+    Flapping,
+    Retrying {
+        attempt: u32,
+        error: String,
+    },
     Failed(String),
     Closed,
 }
@@ -97,8 +103,8 @@ async fn drive(mut eventloop: EventLoop, generation: u64, events: UnboundedSende
                     attempt = 0;
                 }
                 attempt = attempt.saturating_add(1);
-                if short_lived == Some(true) && attempt == FLAPPING_HINT_AFTER {
-                    let _ = events.send((generation, SessionEvent::Warning(FLAPPING_HINT.to_owned())));
+                if short_lived == Some(true) && attempt.is_multiple_of(FLAPPING_AFTER) {
+                    let _ = events.send((generation, SessionEvent::Flapping));
                 }
                 if events.send((generation, SessionEvent::Retrying { attempt, error: error.message })).is_err() {
                     return;
@@ -299,6 +305,25 @@ impl Worker {
                 }
             }
             SessionEvent::Warning(warning) => self.sink.send(Event::Error(warning)),
+            SessionEvent::Flapping => {
+                // Many brokers (and managed services) hang up on clients that subscribe to `$SYS` or other
+                // `$` topics. Those subscriptions are optional extras, so give them up for this session before
+                // bothering the user with a problem they would have to diagnose themselves.
+                let (system, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut active.subscriptions)
+                    .into_iter()
+                    .partition(|entry| entry.filter.starts_with('$'));
+                active.subscriptions = kept;
+                if system.is_empty() {
+                    self.sink.send(Event::Error(FLAPPING_HINT.to_owned()));
+                } else {
+                    let filters: Vec<&str> = system.iter().map(|entry| entry.filter.as_str()).collect();
+                    self.sink.send(Event::Error(format!(
+                        "The broker closes the connection when this client subscribes to {}. Continuing without \
+                         it; remove it from the profile to avoid the delay.",
+                        filters.join(", ")
+                    )));
+                }
+            }
             SessionEvent::Retrying { attempt, error } => {
                 active.connected = false;
                 // Queued subscriptions are re-added on the next connect.
