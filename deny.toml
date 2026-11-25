@@ -1,0 +1,40 @@
+[advisories]
+ignore = [
+    # rustls-webpki 0.102 is only linked, never used to verify anything: `rumqttc` names one of its error types,
+    # and the in-process test broker (`rumqttd`, a dev-dependency) pulls it in. Certificates are verified by
+    # rustls 0.23 with rustls-webpki 0.103. Drop these once `rumqttc` moves off 0.102.
+    { id = "RUSTSEC-2026-0049", reason = "rustls-webpki 0.102 is linked but not used for verification" },
+    { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.102 is linked but not used for verification" },
+    { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.102 is linked but not used for verification" },
+    { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.102 is linked but not used for verification" },
+    { id = "RUSTSEC-2026-0382", reason = "rustls-webpki 0.102 is linked but not used for verification" },
+    # rustls 0.22 comes from the test broker only and never ships.
+    { id = "RUSTSEC-2026-0346", reason = "rustls 0.22 is a dev-dependency of the test broker" },
+    { id = "RUSTSEC-2026-0349", reason = "rustls 0.22 is a dev-dependency of the test broker" },
+]
+
+[licenses]
+version = 2
+private = { ignore = true }
+confidence-threshold = 0.93 # We want really high confidence when inferring licenses from text
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+exceptions = [
+    # The fonts egui embeds.
+    { allow = ["OFL-1.1", "Ubuntu-font-1.0"], crate = "epaint_default_fonts" },
+    # File-level copyleft; used unmodified through `directories`.
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]
+
+[bans]
+multiple-versions = "allow"

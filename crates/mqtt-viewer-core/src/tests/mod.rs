@@ -1,0 +1,10 @@
+mod config_test;
+mod decode_test;
+mod diff_test;
+mod message_test;
+mod numeric_test;
+mod record_test;
+mod stats_test;
+mod store_test;
+mod topic_test;
+mod tree_test;

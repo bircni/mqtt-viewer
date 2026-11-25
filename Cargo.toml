@@ -1,0 +1,68 @@
+[workspace]
+resolver = "3"
+members = ["apps/mqtt-viewer", "crates/mqtt-viewer-core"]
+
+[workspace.package]
+version = "0.1.0"
+authors = ["bircni"]
+edition = "2024"
+rust-version = "1.100"
+license = "MIT"
+repository = "https://github.com/bircni/mqtt-viewer"
+publish = false
+
+[workspace.dependencies]
+mqtt-viewer-core = { path = "crates/mqtt-viewer-core" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+deprecated = "warn"
+elided_lifetimes_in_paths = "warn"
+rust_2021_prelude_collisions = "warn"
+semicolon_in_expressions_from_macros = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_extern_crates = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+
+[workspace.lints.rustdoc]
+all = "warn"
+missing_crate_level_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# Restriction lints, as in the cargo-* repos.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+assertions_on_result_states = "warn"
+create_dir = "warn"
+clone_on_ref_ptr = "warn"
+expect_used = "warn"
+missing_assert_message = "warn"
+panic_in_result_fn = "warn"
+str_to_string = "warn"
+todo = "warn"
+unwrap_used = "warn"
+unimplemented = "warn"
+wildcard_enum_match_arm = "warn"
+# `decoder`/`decoded`, `client`/`clients`: the names are the clearest ones available.
+similar_names = "allow"
+# Pixel arithmetic reads better as `a * b + c` than as `a.mul_add(b, c)`.
+suboptimal_flops = "allow"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+
+# Line tables keep backtraces readable while cutting what CI compiles and caches.
+[profile.dev]
+debug = "line-tables-only"
