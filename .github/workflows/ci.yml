@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "*"
   pull_request:
     branches:
       - main
@@ -14,72 +12,20 @@ permissions:
   contents: read
 
 env:
+  # What eframe needs to build on Linux.
   LINUX_PACKAGES: libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
 jobs:
-
-  typos:
-    name: Typos
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: crate-ci/typos@v1.51.1
-
-  cargo-shear:
-    runs-on: ubuntu-latest
-    needs: typos
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.26.0
-
-      - name: Install cargo-shear
-        run: cargo binstall --no-confirm cargo-shear
-
-      - run: cargo shear
-
-  cargo-deny:
-    runs-on: ubuntu-latest
-    needs: typos
-    steps:
-      - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: [cargo-shear, cargo-deny]
-
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ${{ github.ref_name }}
-      - name: Install Linux packages
-        run: sudo apt-get update && sudo apt-get install -y $LINUX_PACKAGES
-
-      - name: cargo build
-        run: cargo build --workspace
-
   check:
     name: Check
     runs-on: ubuntu-latest
-    needs: build
-
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
-          components: clippy, rustfmt
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ${{ github.ref_name }}
       - name: Install Linux packages
         run: sudo apt-get update && sudo apt-get install -y $LINUX_PACKAGES
 
@@ -89,27 +35,33 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+      # The integration tests start their own in-process broker.
       - name: cargo test
         run: cargo test --workspace
 
-  tarpaulin:
-    name: Tarpaulin
+  # Needs no build: spelling, unused dependencies, licenses and advisories.
+  hygiene:
+    name: Hygiene
     runs-on: ubuntu-latest
-    needs: check
-
     steps:
       - uses: actions/checkout@v7
+      - uses: crate-ci/typos@v1.51.1
+      - uses: cargo-bins/cargo-binstall@v1.26.0
+      - name: cargo shear
+        run: cargo binstall --no-confirm cargo-shear && cargo shear
+      - uses: EmbarkStudios/cargo-deny-action@v2
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-
       - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: ${{ github.ref_name }}
       - name: Install Linux packages
         run: sudo apt-get update && sudo apt-get install -y $LINUX_PACKAGES
+      - uses: taiki-e/install-action@cargo-tarpaulin
 
-      - name: Install cargo-tarpaulin
-        uses: taiki-e/install-action@cargo-tarpaulin
-
-      - name: Run coverage check
+      # The drawing code in ui/ is exercised by the interaction tests but not counted.
+      - name: cargo tarpaulin
         run: cargo tarpaulin --workspace --all-features --exclude-files 'apps/mqtt-viewer/src/ui/*' --fail-under 90 --out Xml --out Stdout
