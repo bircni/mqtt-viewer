@@ -1,5 +1,5 @@
-//! Renders the UI to PNG files for visual inspection. Needs a GPU, so it only runs on request:
-//! `cargo test -p mqtt-viewer screenshots -- --ignored`.
+//! Renders the UI to PNG files for visual inspection and for the README. Needs a GPU, so it only runs on
+//! request: `scripts/screenshots.sh`.
 
 use std::path::PathBuf;
 
@@ -28,6 +28,9 @@ fn screenshots() {
     render("connect", empty);
 
     let mut browsing = populated();
+    if let Some(profile) = &mut browsing.profile {
+        profile.name = "Home broker".into();
+    }
     browsing.apply(Action::SetExpandedRecursive(TopicTree::ROOT, true));
     let climate = browsing.tree.find("home/kitchen/climate").unwrap();
     browsing.apply(Action::Select(Some(climate)));

@@ -1,63 +1,71 @@
-# mqtt-viewer
+<h1 align="center">mqtt-viewer</h1>
 
-A native MQTT client for macOS, Windows and Linux that shows everything on a broker as a live topic tree.
-It speaks MQTT 3.1.1 and 5, decodes binary payloads and records and replays sessions. Written in Rust with
-[egui](https://github.com/emilk/egui); no web view, no Electron.
+<p align="center">
+  A native MQTT client that shows everything on a broker as a live topic tree.<br>
+  macOS, Windows and Linux. No web view, no Electron.
+</p>
+
+<p align="center">
+  <a href="https://github.com/bircni/mqtt-viewer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/bircni/mqtt-viewer/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/bircni/mqtt-viewer/releases"><img alt="Release" src="https://img.shields.io/github/v/release/bircni/mqtt-viewer"></a>
+  <a href="LICENSE"><img alt="MIT licensed" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+</p>
+
+![The topic tree with a selected value, its chart and the publish panel](docs/browse.png)
+
+mqtt-viewer connects to a broker, subscribes and lays out every topic as a tree that updates as messages arrive.
+It speaks MQTT 3.1.1 and 5, decodes binary payloads and records and replays sessions. It is written in Rust with
+[egui](https://github.com/emilk/egui) and stays smooth with 50 000 topics at 5 000 messages per second.
 
 ## Features
 
-- **Connections**: saved profiles; `mqtt://`, `mqtts://`, `ws://` and `wss://`; MQTT 3.1.1 and 5; user name and
-  password, client ID, keep-alive, clean session, last will, a subscription list with QoS per entry; custom CA,
-  client certificate and key, optional certificate validation; automatic reconnect with back-off. Brokers that
-  hang up on `$SYS` subscriptions are handled by dropping those for the session.
-- **Topic tree**: collapsible hierarchy with message and subtopic counts, an inline value preview and a flash when
-  a message arrives. Ordering by name, message count or topic count. Keyboard navigation, pause/resume, and a
-  context menu to copy, publish to, expand or delete. Only visible rows are laid out, so 50 000 topics at
-  5 000 messages per second stay smooth.
-- **Search**: filter by topic and, optionally, by the latest payload.
-- **Value view**: decoded payload with JSON colouring, raw hex dump, QoS, retain flag, timestamp and size, and a
-  diff against the previous message or any message from the history.
-- **Decoders**: text, JSON, hex, Base64, MessagePack, CBOR, Protobuf (load your own `.proto` files and bind
-  message types to topic filters) and Sparkplug B. Detected automatically, overridable per topic.
-- **Publish**: raw, JSON, XML or hex payloads with validation, QoS and retain, a history of what you sent and
-  named presets. On MQTT 5 also user properties, content type, response topic, correlation data and expiry.
-- **Charts**: plot any numeric topic or any number inside a JSON payload, with a time window, a fixed value range,
-  stepped or linear lines and pause.
-- **Record, export, replay**: record a session to a JSON Lines file, export a topic, its history or a subtree as
-  JSON or CSV, and replay a recording to the connected broker at any speed, optionally under another topic prefix.
-- **History on disk** (optional): keep received messages in a local SQLite database so they are back after a
-  restart, with limits by age and size.
-- Light and dark theme.
+| | |
+|---|---|
+| **Topic tree** | Collapsible hierarchy with message and subtopic counts, inline value previews and a flash on activity. Order by name, messages or topics; navigate with the keyboard; pause when it moves too fast. |
+| **Search** | Filter by topic and, optionally, by the latest payload. |
+| **Values** | Decoded payload with JSON colouring, a raw hex dump, QoS, retain flag, timestamp and size. Diff against the previous message or any message from the history. |
+| **Decoders** | Text, JSON, hex, Base64, MessagePack, CBOR, Sparkplug B and Protobuf with your own `.proto` files. Detected automatically, overridable per topic. |
+| **Publish** | Raw, JSON, XML or hex payloads with validation, QoS and retain, a list of what you sent and named presets. MQTT 5 user properties, content type, response topic, correlation data and expiry. |
+| **Charts** | Plot any numeric topic or any number inside a JSON payload, with a time window, a fixed range, steps or lines. |
+| **Record and replay** | Record a session to a file, export a topic, its history or a subtree as JSON or CSV, and replay a recording at any speed, optionally under another topic prefix. |
+| **Retained messages** | Delete one, or a whole subtree after a confirmation. |
+| **History on disk** | Optionally keep received messages in a local database so they are back after a restart. |
+| **Connections** | Saved profiles for `mqtt://`, `mqtts://`, `ws://` and `wss://`, MQTT 3.1.1 and 5, with client certificates, last will, a subscription list and automatic reconnect. |
 
-## Build and run
+<p align="center">
+  <img alt="The connection dialog" src="docs/connect.png" width="49%">
+  <img alt="The settings dialog" src="docs/settings.png" width="49%">
+</p>
 
-You need a [Rust toolchain](https://rustup.rs) (1.100 or newer).
+## Install
+
+**Windows and Linux**: download the archive for your platform from the
+[releases page](https://github.com/bircni/mqtt-viewer/releases), unpack it and run `mqtt-viewer`. The Windows
+build is not signed, so SmartScreen asks for confirmation on the first start.
+
+**macOS**, or any platform from source, with a [Rust toolchain](https://rustup.rs):
 
 ```sh
+git clone https://github.com/bircni/mqtt-viewer
+cd mqtt-viewer
 cargo run --release -p mqtt-viewer
 ```
 
-Platform notes:
+What a source build needs on Linux and Windows is listed in [CONTRIBUTING.md](CONTRIBUTING.md#building).
 
-- **macOS**: nothing else is needed.
-- **Linux**: install the development packages for xkbcommon, Wayland and XCB, e.g. on Debian/Ubuntu
-  `sudo apt install libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev`.
-  File dialogs use the XDG desktop portal.
-- **Windows**: the MSVC toolchain. The TLS library needs [NASM](https://www.nasm.us) on the `PATH`, or set
-  `AWS_LC_SYS_PREBUILT_NASM=1` before building to use its prebuilt objects instead.
+## Getting started
 
-### Try it without a broker
+1. Start the app. The connection dialog opens; enter your broker's host and port and press **Connect**.
+2. Topics appear as messages arrive. Click one to see its value, history and statistics on the right.
+3. Click a number under **Chart** to plot it, or use the **Publish** panel to send a message to the selected topic.
 
-The repository contains a small local broker and a load generator:
+No broker at hand? The repository ships a small one for testing:
 
 ```sh
-cargo run -p mqtt-viewer-core --example broker            # MQTT on 127.0.0.1:1883, MQTT 5 on 1884, WebSocket on 1885
-cargo run --release -p mqtt-viewer-core --example flood   # 50 000 topics at 5 000 msg/s for 30 s
+cargo run -p mqtt-viewer-core --example broker
 ```
 
-That broker closes connections that subscribe to `$SYS/#`. The app notices, carries on without that subscription
-and tells you; removing the entry from the profile avoids the two-second delay. The broker exists for testing; use
-a real one such as Mosquitto for anything else.
+Then connect to `localhost:1883`.
 
 ## Configuration
 
@@ -69,31 +77,18 @@ Profiles and settings live in one file:
 | Linux | `~/.config/mqtt-viewer/config.toml` |
 | Windows | `%APPDATA%\bircni\mqtt-viewer\config\config.toml` |
 
-**Passwords are stored in this file in clear text.** The file is created readable by your user only on macOS and
-Linux, but anything running as you can read it. Leave the password empty in the profile if that is not acceptable.
+> [!WARNING]
+> Passwords are stored in this file in clear text. On macOS and Linux the file is readable by your user only, but
+> anything running as you can read it. Leave the password empty in the profile if that is not acceptable.
 
-The optional history database (`history.sqlite`) is kept in the platform's data directory. Set the environment
-variable `MQTT_VIEWER_DATA_DIR` to keep both files in a directory of your choice instead.
+Set the environment variable `MQTT_VIEWER_DATA_DIR` to keep the configuration and the optional history database
+(`history.sqlite`) in a directory of your choice. A configuration file that cannot be parsed is kept next to the
+new one as `config.toml.broken`.
 
-If the configuration file cannot be parsed, the app starts with defaults and keeps the unreadable file next to it
-as `config.toml.broken`.
+## Contributing
 
-## Development
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
-cargo deny check && cargo shear && typos
-cargo tarpaulin --workspace --all-features --exclude-files 'apps/mqtt-viewer/src/ui/*' --fail-under 90
-```
-
-The workspace has two crates: `crates/mqtt-viewer-core` (connection, topic tree, decoders, recording, history
-store; no UI) and `apps/mqtt-viewer` (the egui application). Integration tests start an in-process broker, so no
-external services are needed. CI runs on Linux only; macOS and Windows are checked by building locally
-(`cargo xwin build --release -p mqtt-viewer --target x86_64-pc-windows-msvc` cross-compiles the Windows executable). `cargo test -p mqtt-viewer screenshots -- --ignored` renders the UI to
-`target/screenshots/` on a machine with a GPU.
+Build instructions, the test setup and the release process are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)

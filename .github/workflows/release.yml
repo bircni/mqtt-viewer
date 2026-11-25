@@ -1,0 +1,92 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Linux packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Build mqtt-viewer
+        run: cargo build --release --locked -p mqtt-viewer
+
+      - name: Build package
+        id: package
+        run: |
+          ARCHIVE="mqtt-viewer-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
+          tar -czvf "$ARCHIVE" -C target/release mqtt-viewer
+          echo "file=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.file }}
+          path: ${{ steps.package.outputs.file }}
+          if-no-files-found: error
+
+  # Cross-compiled on Linux: Windows runners cost twice as much and are not needed for this.
+  windows:
+    name: Windows archive
+    runs-on: ubuntu-latest
+    env:
+      # Use the TLS library's prebuilt assembly objects instead of requiring NASM.
+      AWS_LC_SYS_PREBUILT_NASM: 1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      # clang-cl, lld-link and llvm-lib stand in for the MSVC tools.
+      - name: Install LLVM
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
+      - uses: cargo-bins/cargo-binstall@v1.26.0
+      - name: Install cargo-xwin
+        run: cargo binstall --no-confirm cargo-xwin
+
+      - name: Build mqtt-viewer
+        run: cargo xwin build --release --locked -p mqtt-viewer --target x86_64-pc-windows-msvc
+
+      - name: Build package
+        id: package
+        run: |
+          ARCHIVE="mqtt-viewer-${GITHUB_REF_NAME}-x86_64-pc-windows-msvc.zip"
+          zip -j "$ARCHIVE" target/x86_64-pc-windows-msvc/release/mqtt-viewer.exe
+          echo "file=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.file }}
+          path: ${{ steps.package.outputs.file }}
+          if-no-files-found: error
+
+  deploy:
+    name: GitHub release
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ./binaries
+          merge-multiple: true
+
+      - name: Create a release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: v${{ github.ref_name }}
+          files: |
+            ./binaries/*.zip
+            ./binaries/*.tar.gz
