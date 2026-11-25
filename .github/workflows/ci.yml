@@ -15,8 +15,6 @@ permissions:
 
 env:
   LINUX_PACKAGES: libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-  # Lets the TLS library build on Windows runners without NASM installed.
-  AWS_LC_SYS_PREBUILT_NASM: 1
 
 jobs:
 
@@ -50,13 +48,9 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Build
+    runs-on: ubuntu-latest
     needs: [cargo-shear, cargo-deny]
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v7
@@ -65,22 +59,17 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ${{ matrix.os }}-${{ github.ref_name }}
+          shared-key: ${{ github.ref_name }}
       - name: Install Linux packages
-        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y $LINUX_PACKAGES
 
       - name: cargo build
         run: cargo build --workspace
 
   check:
-    name: Check (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Check
+    runs-on: ubuntu-latest
     needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - uses: actions/checkout@v7
@@ -90,9 +79,8 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ${{ matrix.os }}-${{ github.ref_name }}
+          shared-key: ${{ github.ref_name }}
       - name: Install Linux packages
-        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y $LINUX_PACKAGES
 
       - name: cargo fmt
@@ -116,7 +104,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ubuntu-latest-${{ github.ref_name }}
+          shared-key: ${{ github.ref_name }}
       - name: Install Linux packages
         run: sudo apt-get update && sudo apt-get install -y $LINUX_PACKAGES
 

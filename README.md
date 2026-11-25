@@ -90,7 +90,8 @@ cargo tarpaulin --workspace --all-features --exclude-files 'apps/mqtt-viewer/src
 
 The workspace has two crates: `crates/mqtt-viewer-core` (connection, topic tree, decoders, recording, history
 store; no UI) and `apps/mqtt-viewer` (the egui application). Integration tests start an in-process broker, so no
-external services are needed. `cargo test -p mqtt-viewer screenshots -- --ignored` renders the UI to
+external services are needed. CI runs on Linux only; macOS and Windows are checked by building locally
+(`cargo xwin build --release -p mqtt-viewer --target x86_64-pc-windows-msvc` cross-compiles the Windows executable). `cargo test -p mqtt-viewer screenshots -- --ignored` renders the UI to
 `target/screenshots/` on a machine with a GPU.
 
 ## License
