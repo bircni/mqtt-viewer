@@ -393,6 +393,9 @@ pub struct DecoderOverride {
     pub format: Format,
 }
 
+/// Environment variable naming a directory to keep the configuration and the history database in.
+pub const DATA_DIR_VARIABLE: &str = "MQTT_VIEWER_DATA_DIR";
+
 /// The whole configuration file.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -415,15 +418,34 @@ pub struct AppConfig {
 
 impl AppConfig {
     /// Default location of the configuration file, if the platform has a config directory.
+    ///
+    /// Setting the environment variable [`DATA_DIR_VARIABLE`] moves both this file and the history database
+    /// into that directory (a "portable" setup).
     #[must_use]
     pub fn default_path() -> Option<PathBuf> {
-        project_dirs().map(|dirs| dirs.config_dir().join("config.toml"))
+        Self::config_path_in(std::env::var_os(DATA_DIR_VARIABLE).map(PathBuf::from))
     }
 
-    /// Default location of the history database.
+    /// Default location of the history database; see [`Self::default_path`].
     #[must_use]
     pub fn default_database_path() -> Option<PathBuf> {
-        project_dirs().map(|dirs| dirs.data_dir().join("history.sqlite"))
+        Self::database_path_in(std::env::var_os(DATA_DIR_VARIABLE).map(PathBuf::from))
+    }
+
+    /// The configuration file inside `directory`, or in the platform's config directory when `None`.
+    #[must_use]
+    pub fn config_path_in(directory: Option<PathBuf>) -> Option<PathBuf> {
+        directory
+            .or_else(|| project_dirs().map(|dirs| dirs.config_dir().to_owned()))
+            .map(|base| base.join("config.toml"))
+    }
+
+    /// The history database inside `directory`, or in the platform's data directory when `None`.
+    #[must_use]
+    pub fn database_path_in(directory: Option<PathBuf>) -> Option<PathBuf> {
+        directory
+            .or_else(|| project_dirs().map(|dirs| dirs.data_dir().to_owned()))
+            .map(|base| base.join("history.sqlite"))
     }
 
     /// Loads the configuration; a missing file yields the defaults.

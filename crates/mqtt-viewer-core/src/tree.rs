@@ -5,6 +5,7 @@
 //! by a byte budget that evicts the oldest messages first while always keeping the latest value of every topic.
 
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use jiff::Timestamp;
@@ -241,7 +242,13 @@ pub struct TopicTree {
     order: TreeOrder,
     filter: Filter,
     rows: Vec<Row>,
+    /// The rows no longer match the tree's structure or view settings; rebuilt on the next read.
     rows_dirty: bool,
+    /// Only counts or payloads changed, which can reorder or re-filter rows; rebuilt at most once per
+    /// [`Self::refresh_interval`].
+    rows_stale: bool,
+    rows_built_at: Instant,
+    refresh_interval: Duration,
     next_seq: u64,
     /// Arrival order of stored entries, for budget eviction. May contain entries already evicted by the cap.
     arrival: VecDeque<(NodeId, u64)>,
@@ -257,6 +264,8 @@ impl Default for TopicTree {
 impl TopicTree {
     /// The root node; it is never shown and has an empty name.
     pub const ROOT: NodeId = NodeId(0);
+    /// How often rows are re-sorted and re-filtered while only message counts and payloads change.
+    pub const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 
     /// An empty tree.
     #[must_use]
@@ -269,6 +278,9 @@ impl TopicTree {
             filter: Filter::default(),
             rows: Vec::new(),
             rows_dirty: true,
+            rows_stale: false,
+            rows_built_at: Instant::now(),
+            refresh_interval: Self::DEFAULT_REFRESH_INTERVAL,
             next_seq: 0,
             arrival: VecDeque::new(),
             stats: TreeStats::default(),
@@ -277,7 +289,12 @@ impl TopicTree {
 
     /// Removes every topic.
     pub fn clear(&mut self) {
-        *self = Self { order: self.order, filter: self.filter.clone(), ..Self::new(self.limits) };
+        *self = Self {
+            order: self.order,
+            filter: self.filter.clone(),
+            refresh_interval: self.refresh_interval,
+            ..Self::new(self.limits)
+        };
     }
 
     /// The node behind `id`.
@@ -397,8 +414,9 @@ impl TopicTree {
         }
 
         if self.order != TreeOrder::Alphabetical || !self.filter.is_empty() {
-            // Counts drive the order and payloads the filter, so the rows may have moved.
-            self.rows_dirty = true;
+            // Counts drive the order and payloads the filter, so the rows may have moved. Rebuilding for every
+            // message would cost a full sort per frame on a busy broker, so this is picked up on a timer.
+            self.rows_stale = true;
         }
         self.enforce_cap(leaf);
         self.enforce_budget();
@@ -566,10 +584,21 @@ impl TopicTree {
 
     /// The visible rows, top to bottom. Rebuilt lazily after structural changes.
     pub fn rows(&mut self) -> &[Row] {
-        if self.rows_dirty {
+        if self.rows_dirty || (self.rows_stale && self.rows_built_at.elapsed() >= self.refresh_interval) {
             self.rebuild_rows();
         }
         &self.rows
+    }
+
+    /// Whether the rows are waiting for their next periodic rebuild; the caller should read them again soon.
+    #[must_use]
+    pub const fn rows_pending(&self) -> bool {
+        self.rows_stale
+    }
+
+    /// Changes how often rows follow count and payload changes. Zero means "on every read".
+    pub const fn set_refresh_interval(&mut self, interval: Duration) {
+        self.refresh_interval = interval;
     }
 
     /// The rows as of the last call to [`Self::rows`]. Lets a renderer read rows and nodes at the same time.
@@ -618,7 +647,7 @@ impl TopicTree {
             if id != Self::ROOT {
                 path.push('/');
             }
-            path.push_str(&self.nodes[child.0].name.to_lowercase());
+            path.extend(self.nodes[child.0].name.chars().flat_map(char::to_lowercase));
             any_child |= self.mark_visible(*child, path, visibility);
             path.truncate(base);
         }
@@ -654,6 +683,8 @@ impl TopicTree {
         }
         self.rows = rows;
         self.rows_dirty = false;
+        self.rows_stale = false;
+        self.rows_built_at = Instant::now();
     }
 }
 

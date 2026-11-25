@@ -178,3 +178,13 @@ fn default_paths_end_in_expected_names() {
         assert!(path.ends_with("history.sqlite"), "{}", path.display());
     }
 }
+
+#[test]
+fn a_data_directory_override_holds_both_files() {
+    let portable = PathBuf::from("portable");
+    assert_eq!(AppConfig::config_path_in(Some(portable.clone())), Some(portable.join("config.toml")));
+    assert_eq!(AppConfig::database_path_in(Some(portable.clone())), Some(portable.join("history.sqlite")));
+    if let (Some(config), Some(database)) = (AppConfig::config_path_in(None), AppConfig::database_path_in(None)) {
+        assert!(!config.starts_with(&portable) && !database.starts_with(&portable));
+    }
+}

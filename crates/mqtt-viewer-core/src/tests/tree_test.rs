@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use jiff::Timestamp;
@@ -9,6 +9,8 @@ use crate::tree::{Filter, HistoryLimits, NodeId, TopicTree};
 
 fn tree_with(topics: &[&str]) -> TopicTree {
     let mut tree = TopicTree::default();
+    // Most tests read the rows right after inserting and expect them to be current.
+    tree.set_refresh_interval(Duration::ZERO);
     for topic in topics {
         tree.insert(Message::new(*topic, "v"));
     }
@@ -174,6 +176,7 @@ fn filter_keeps_matches_and_their_ancestors() {
 #[test]
 fn filter_can_search_payloads() {
     let mut tree = TopicTree::default();
+    tree.set_refresh_interval(Duration::ZERO);
     tree.insert(Message::new("a/b", r#"{"state":"OPEN"}"#));
     tree.insert(Message::new("a/c", "closed"));
     tree.insert(Message::new("d", "x"));
@@ -370,4 +373,38 @@ fn fifty_thousand_topics_and_a_million_messages_stay_within_budget() {
     assert_eq!(rows, TOPICS + 1 + 10 + 10 + 500 + 500, "all levels are visible when expanded");
     assert_ne!(last, NodeId::clone(&TopicTree::ROOT));
     assert!(elapsed.as_secs() < 120, "took {elapsed:?}");
+}
+
+#[test]
+fn count_driven_reordering_is_throttled() {
+    let mut tree = TopicTree::default();
+    tree.set_refresh_interval(Duration::from_secs(3600));
+    tree.set_order(TreeOrder::Messages);
+    tree.insert(Message::new("a", "v"));
+    tree.insert(Message::new("b", "v"));
+    assert_eq!(render(&mut tree), " a\n b");
+    assert!(!tree.rows_pending());
+
+    for _ in 0..5 {
+        tree.insert(Message::new("b", "v"));
+    }
+    assert!(tree.rows_pending());
+    assert_eq!(render(&mut tree), " a\n b", "the order is not recomputed for every message");
+    assert_eq!(tree.cached_rows().len(), 2);
+
+    // New topics and view changes still show up at once.
+    tree.insert(Message::new("c", "v"));
+    assert_eq!(render(&mut tree), " b\n a\n c");
+    assert!(!tree.rows_pending());
+
+    tree.insert(Message::new("c", "v"));
+    tree.insert(Message::new("c", "v"));
+    tree.set_refresh_interval(Duration::ZERO);
+    assert_eq!(render(&mut tree), " b\n c\n a");
+
+    tree.set_refresh_interval(Duration::from_secs(3600));
+    tree.clear();
+    tree.insert(Message::new("x", "v"));
+    tree.insert(Message::new("x", "v"));
+    assert!(tree.rows_pending(), "clearing keeps the interval");
 }
