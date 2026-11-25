@@ -130,12 +130,18 @@ pub struct TcpProxy {
 struct ProxyState {
     down: AtomicBool,
     streams: Mutex<Vec<TcpStream>>,
+    /// Every byte the clients sent towards the broker.
+    sent: Mutex<Vec<u8>>,
 }
 
 impl TcpProxy {
     pub fn start(target: u16) -> Self {
         let port = free_port();
-        let state = Arc::new(ProxyState { down: AtomicBool::new(false), streams: Mutex::new(Vec::new()) });
+        let state = Arc::new(ProxyState {
+            down: AtomicBool::new(false),
+            streams: Mutex::new(Vec::new()),
+            sent: Mutex::new(Vec::new()),
+        });
         let proxy = Self { port, target, state };
         proxy.listen();
         proxy
@@ -156,8 +162,8 @@ impl TcpProxy {
                         streams.push(client.try_clone().unwrap());
                         streams.push(server.try_clone().unwrap());
                         drop(streams);
-                        pipe(client.try_clone().unwrap(), server.try_clone().unwrap());
-                        pipe(server, client);
+                        pipe(client.try_clone().unwrap(), server.try_clone().unwrap(), Some(Arc::clone(&state)));
+                        pipe(server, client, None);
                     }
                     Err(_) => std::thread::sleep(Duration::from_millis(10)),
                 }
@@ -175,6 +181,35 @@ impl TcpProxy {
         std::thread::sleep(Duration::from_millis(100));
     }
 
+    /// The PUBLISH packets the clients sent so far, as `(topic, qos, retain)` read from the wire.
+    /// Only meaningful for MQTT 3.1.1 traffic of a single client.
+    pub fn published(&self) -> Vec<(String, u8, bool)> {
+        let bytes = self.state.sent.lock().unwrap().clone();
+        let mut packets = Vec::new();
+        let mut position = 0;
+        while position < bytes.len() {
+            let header = bytes[position];
+            // Remaining length: up to four bytes, seven bits each, high bit means "more".
+            let (mut length, mut shift, mut cursor) = (0_usize, 0, position + 1);
+            while let Some(byte) = bytes.get(cursor) {
+                length |= usize::from(byte & 0x7f) << shift;
+                shift += 7;
+                cursor += 1;
+                if byte & 0x80 == 0 {
+                    break;
+                }
+            }
+            let Some(body) = bytes.get(cursor..cursor + length) else { break };
+            if header >> 4 == 3 {
+                let topic_length = usize::from(u16::from_be_bytes([body[0], body[1]]));
+                let topic = String::from_utf8_lossy(&body[2..2 + topic_length]).into_owned();
+                packets.push((topic, (header >> 1) & 0b11, header & 1 == 1));
+            }
+            position = cursor + length;
+        }
+        packets
+    }
+
     /// Accepts connections again.
     pub fn restore(&self) {
         self.state.down.store(false, Ordering::SeqCst);
@@ -182,13 +217,16 @@ impl TcpProxy {
     }
 }
 
-fn pipe(mut from: TcpStream, mut to: TcpStream) {
+fn pipe(mut from: TcpStream, mut to: TcpStream, capture: Option<Arc<ProxyState>>) {
     std::thread::spawn(move || {
         let mut buffer = [0_u8; 8192];
         loop {
             match from.read(&mut buffer) {
                 Ok(0) | Err(_) => break,
                 Ok(read) => {
+                    if let Some(state) = &capture {
+                        state.sent.lock().unwrap().extend_from_slice(&buffer[..read]);
+                    }
                     if to.write_all(&buffer[..read]).is_err() {
                         break;
                     }
@@ -246,16 +284,29 @@ impl Client {
         self.wait_messages(topic, 1).remove(0)
     }
 
-    /// Waits until `count` messages on `topic` arrived (across batches) and returns them in order.
+    /// Waits until `count` messages on `topic` have arrived since the client was created and returns all of
+    /// them in order. Earlier events count too, since one batch often carries messages for several topics.
     pub fn wait_messages(&mut self, topic: &str, count: usize) -> Vec<Message> {
-        let mut found = Vec::new();
-        self.wait(&format!("{count} message(s) on {topic}"), |event| {
-            if let Event::Messages(batch) = event {
-                found.extend(batch.iter().filter(|message| message.topic == topic).cloned());
+        let on_topic = |log: &[Event]| -> Vec<Message> {
+            log.iter()
+                .filter_map(|event| if let Event::Messages(batch) = event { Some(batch) } else { None })
+                .flatten()
+                .filter(|message| message.topic == topic)
+                .cloned()
+                .collect()
+        };
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let found = on_topic(&self.log);
+            if found.len() >= count {
+                return found;
             }
-            (found.len() >= count).then_some(())
-        });
-        found
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let Some(event) = self.connection.wait_event(remaining) else {
+                panic!("timed out waiting for {count} message(s) on {topic}; events so far: {:#?}", self.log);
+            };
+            self.log.push(event);
+        }
     }
 
     pub fn wait_error(&mut self) -> String {

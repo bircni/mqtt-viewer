@@ -2,5 +2,6 @@
 
 mod common;
 mod connection;
+mod recording;
 mod transports;
 mod v5;

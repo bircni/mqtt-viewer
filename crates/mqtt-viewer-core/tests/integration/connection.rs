@@ -315,16 +315,7 @@ fn replay_publishes_steps_with_their_delays() {
     client.wait("replay end", |event| (*event == Event::ReplayFinished { sent: 5, total: 5 }).then_some(()));
     assert!(started.elapsed() >= Duration::from_millis(600), "delays were honoured: {:?}", started.elapsed());
     assert!(client.log.iter().any(|event| matches!(event, Event::ReplayProgress { total: 5, .. })));
-    let mut seen: Vec<u8> = client
-        .log
-        .iter()
-        .filter_map(|event| if let Event::Messages(batch) = event { Some(batch) } else { None })
-        .flatten()
-        .map(|message| message.payload[0])
-        .collect();
-    if seen.len() < 5 {
-        seen.extend(client.wait_messages("test/replay", 5 - seen.len()).iter().map(|message| message.payload[0]));
-    }
+    let seen: Vec<u8> = client.wait_messages("test/replay", 5).iter().map(|message| message.payload[0]).collect();
     assert_eq!(seen, [0, 1, 2, 3, 4]);
 }
 

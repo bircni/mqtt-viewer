@@ -5,12 +5,14 @@ use std::time::{Duration, Instant};
 use eframe::egui::vec2;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
-use mqtt_viewer_core::config::AppConfig;
+use mqtt_viewer_core::config::{AppConfig, Subscription};
 use mqtt_viewer_core::connection::ConnectionState;
+use mqtt_viewer_core::diff::ChangeKind;
+use mqtt_viewer_core::message::QoS;
 
 use super::broker;
 use crate::app::App;
-use crate::state::{AppState, Dialog};
+use crate::state::{Action, AppState, Dialog};
 
 fn harness(state: AppState) -> Harness<'static, App> {
     Harness::builder()
@@ -86,4 +88,94 @@ fn connect_browse_and_publish_through_the_window() {
     harness.get_by_label("Disconnect").click();
     run_until(&mut harness, "the disconnect", |state| state.connection == ConnectionState::Disconnected);
     harness.get_by_label("Connect…");
+}
+
+/// A harness connected to `port` with a QoS 2 subscription to everything.
+fn connected(port: u16, state: AppState) -> Harness<'static, App> {
+    let mut harness = harness(state);
+    harness.state_mut().state_mut().apply(Action::NewProfile);
+    if let Dialog::Connect(dialog) = &mut harness.state_mut().state_mut().dialog {
+        dialog.draft.id = "test-profile".into();
+        dialog.draft.host = "127.0.0.1".into();
+        dialog.draft.port = port;
+        dialog.draft.subscriptions = vec![Subscription { filter: "#".into(), qos: QoS::ExactlyOnce }];
+    }
+    harness.state_mut().state_mut().apply(Action::Connect);
+    run_until(&mut harness, "the connection", |state| state.connection == ConnectionState::Connected);
+    harness
+}
+
+fn publish(harness: &mut Harness<'static, App>, topic: &str, payload: &str, retain: bool) {
+    let form = &mut harness.state_mut().state_mut().publish;
+    form.topic = topic.into();
+    form.payload = payload.into();
+    form.retain = retain;
+    harness.state_mut().state_mut().apply(Action::Publish);
+}
+
+fn message_count(state: &AppState, topic: &str) -> u64 {
+    state.tree.find(topic).map_or(0, |node| state.tree.node(node).message_count())
+}
+
+#[test]
+fn live_values_feed_charts_and_diffs_and_retained_topics_can_be_deleted() {
+    let port = broker::start();
+    let mut harness = connected(port, AppState::new(AppConfig::default(), None, None));
+    publish(&mut harness, "plant/temp", r#"{"t":21.0}"#, true);
+    run_until(&mut harness, "the first value", |state| message_count(state, "plant/temp") == 1);
+    publish(&mut harness, "plant/temp", r#"{"t":22.5}"#, true);
+    run_until(&mut harness, "the second value", |state| message_count(state, "plant/temp") == 2);
+
+    let app = harness.state_mut().state_mut();
+    let node = app.tree.find("plant/temp");
+    app.apply(Action::Select(node));
+    app.apply(Action::AddChart { topic: "plant/temp".into(), pointer: "/t".into() });
+    assert_eq!(app.charts[0].points.iter().map(|point| point[1]).collect::<Vec<_>>(), [21.0, 22.5]);
+    let changed = app.selected_diff().unwrap().iter().filter(|line| line.kind != ChangeKind::Equal).count();
+    assert_eq!(changed, 2, "one line removed, one added");
+
+    publish(&mut harness, "plant/temp", r#"{"t":23.0}"#, true);
+    run_until(&mut harness, "the chart to follow", |state| state.charts[0].latest() == Some(23.0));
+
+    // Delete the retained message and check with a second session that the broker forgot it.
+    let app = harness.state_mut().state_mut();
+    let node = app.tree.find("plant/temp").unwrap();
+    app.apply(Action::DeleteRetained { node, recursive: false });
+    run_until(&mut harness, "the topic to disappear", |state| state.tree.find("plant/temp").is_none());
+    publish(&mut harness, "sync/marker", "1", false);
+    run_until(&mut harness, "the marker", |state| state.tree.find("sync/marker").is_some());
+    assert_eq!(harness.state().state().tree.find("plant/temp"), None, "the broker's echo does not bring it back");
+
+    let mut second = connected(port, AppState::new(AppConfig::default(), None, None));
+    publish(&mut second, "sync/marker2", "1", false);
+    run_until(&mut second, "the second session's marker", |state| state.tree.find("sync/marker2").is_some());
+    assert_eq!(second.state().state().tree.find("plant/temp"), None, "no retained message is delivered any more");
+}
+
+#[test]
+fn stored_history_survives_a_restart() {
+    let port = broker::start();
+    let directory = tempfile::tempdir().unwrap();
+    let (config, database) = (directory.path().join("config.toml"), directory.path().join("history.sqlite"));
+    let mut settings = AppConfig::default();
+    settings.settings.persist_history = true;
+    settings.save(&config).unwrap();
+
+    let mut first = connected(port, AppState::load_from(Some(config.clone()), Some(database.clone())));
+    assert!(first.state().state().is_persisting());
+    for value in ["1", "2", "3"] {
+        publish(&mut first, "meter/energy", value, false);
+    }
+    run_until(&mut first, "the readings", |state| message_count(state, "meter/energy") == 3);
+    drop(first);
+
+    // A new session: the readings are back from disk before the broker has sent anything.
+    let mut second = harness(AppState::load_from(Some(config), Some(database)));
+    let app = second.state_mut().state_mut();
+    app.apply(Action::OpenConnectDialog);
+    app.apply(Action::Connect);
+    let node = app.tree.find("meter/energy").expect("the stored topic is restored on connect");
+    let payloads: Vec<&[u8]> = app.tree.node(node).history().iter().map(|entry| &entry.payload[..]).collect();
+    assert_eq!(payloads, [b"1", b"2", b"3"]);
+    run_until(&mut second, "the connection", |state| state.connection == ConnectionState::Connected);
 }
