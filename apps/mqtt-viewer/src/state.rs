@@ -703,10 +703,7 @@ impl AppState {
             }
             Action::Connect => self.connect(),
             Action::Disconnect => self.commands.push(Command::Disconnect),
-            Action::Select(selection) => {
-                self.selected = selection.filter(|id| self.tree.contains(*id));
-                self.compare_with = None;
-            }
+            Action::Select(selection) => self.select(selection),
             Action::SetExpanded(node, expanded) => self.tree.set_expanded(node, expanded),
             Action::SetExpandedRecursive(node, expanded) => self.tree.set_expanded_recursive(node, expanded),
             Action::Navigate(direction) => self.navigate(direction),
@@ -902,6 +899,17 @@ impl AppState {
         }
     }
 
+    fn select(&mut self, selection: Option<NodeId>) {
+        let previous = self.selected_topic();
+        self.selected = selection.filter(|id| self.tree.contains(*id));
+        self.compare_with = None;
+        // The publish topic follows the selection until the user types a topic of their own.
+        let follows = self.publish.topic.is_empty() || Some(&self.publish.topic) == previous.as_ref();
+        if let (true, Some(topic)) = (follows, self.selected_topic()) {
+            self.publish.topic = topic;
+        }
+    }
+
     /// Saves the connection dialog's draft into the profile list. Returns the saved profile when it is valid.
     fn store_draft(&mut self) -> Option<ConnectionProfile> {
         let Dialog::Connect(dialog) = &self.dialog else { return None };
@@ -1014,7 +1022,7 @@ impl AppState {
         }
         let current = self.selected.and_then(|id| rows.iter().position(|row| row.id == id));
         let Some(index) = current else {
-            self.selected = Some(rows[0].id);
+            self.select(Some(rows[0].id));
             self.reveal_selection = true;
             return;
         };
@@ -1047,8 +1055,7 @@ impl AppState {
         if let Some(target_row) = rows.get(target)
             && target_row.id != row.id
         {
-            self.selected = Some(target_row.id);
-            self.compare_with = None;
+            self.select(Some(target_row.id));
         }
         self.reveal_selection = true;
     }

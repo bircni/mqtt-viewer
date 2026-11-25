@@ -858,3 +858,21 @@ fn the_sample_session_is_consistent() {
     select(&mut state, "home/kitchen/climate");
     assert_eq!(state.selected_value().unwrap().chartable, ["/humidity", "/ok", "/temperature"]);
 }
+
+#[test]
+fn the_publish_topic_follows_the_selection_until_edited() {
+    let mut state = state();
+    receive(&mut state, &[("a/b", "1"), ("a/c", "2"), ("d", "3")]);
+    select(&mut state, "a/b");
+    assert_eq!(state.publish.topic, "a/b");
+    select(&mut state, "a/c");
+    assert_eq!(state.publish.topic, "a/c");
+    state.apply(Action::Navigate(Navigate::Down));
+    assert_eq!(state.publish.topic, "d", "keyboard selection counts too");
+
+    state.publish.topic = "my/own/topic".into();
+    select(&mut state, "a/b");
+    assert_eq!(state.publish.topic, "my/own/topic", "a typed topic is never overwritten");
+    state.apply(Action::Select(None));
+    assert_eq!(state.publish.topic, "my/own/topic");
+}

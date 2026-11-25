@@ -14,7 +14,9 @@ permissions:
   contents: read
 
 env:
-  LINUX_PACKAGES: libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libgtk-3-dev
+  LINUX_PACKAGES: libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+  # Lets the TLS library build on Windows runners without NASM installed.
+  AWS_LC_SYS_PREBUILT_NASM: 1
 
 jobs:
 

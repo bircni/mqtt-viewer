@@ -4,6 +4,7 @@ mod chart_test;
 mod format_test;
 mod forms_test;
 mod highlight_test;
+mod icon_test;
 mod screenshot_test;
 mod state_test;
 mod ui_test;
@@ -17,7 +18,10 @@ use crate::state::{Action, AppState};
 
 /// A state that persists nothing.
 pub fn state() -> AppState {
-    AppState::new(AppConfig::default(), None, None)
+    let mut state = AppState::new(AppConfig::default(), None, None);
+    // Tests read the rows right after delivering messages and expect them to be current.
+    state.tree.set_refresh_interval(std::time::Duration::ZERO);
+    state
 }
 
 /// A message with a fixed timestamp `seconds` after an arbitrary start.

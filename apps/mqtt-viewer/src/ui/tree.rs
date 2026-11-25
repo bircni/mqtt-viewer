@@ -5,7 +5,7 @@ use eframe::egui::text::{LayoutJob, TextFormat, TextWrapping};
 use eframe::egui::{self, Align, FontId, Rect, Role, ScrollArea, Sense, Stroke, TextStyle, WidgetInfo, pos2, vec2};
 use jiff::Timestamp;
 use mqtt_viewer_core::decode;
-use mqtt_viewer_core::tree::{NodeId, Row};
+use mqtt_viewer_core::tree::{NodeId, Row, TopicTree};
 
 use super::theme::Palette;
 use crate::format;
@@ -19,6 +19,10 @@ const PREVIEW_CHARS: usize = 120;
 
 pub fn show(ui: &mut egui::Ui, state: &mut AppState, actions: &mut Vec<Action>) {
     let total = state.tree.rows().len();
+    if state.tree.rows_pending() {
+        // Sorting by counts and payload filtering are refreshed on a timer; make sure a frame follows.
+        ui.ctx().request_repaint_after(TopicTree::DEFAULT_REFRESH_INTERVAL);
+    }
     if total == 0 {
         ui.centered_and_justified(|ui| {
             let hint = if state.tree.stats().topics > 0 {

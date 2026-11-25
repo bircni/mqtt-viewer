@@ -357,3 +357,32 @@ fn toolbar_actions_and_notices() {
     click(&mut harness, "Disconnect");
     assert!(matches!(harness.state_mut().take_commands()[..], [Command::Disconnect]));
 }
+
+/// The scale target: with 50 000 topics on screen and messages pouring in, a frame stays cheap because only
+/// the visible rows are laid out.
+#[test]
+fn fifty_thousand_topics_do_not_slow_down_a_frame() {
+    const TOPICS: usize = 50_000;
+    const FRAMES: u32 = 30;
+    let mut state = state();
+    let topics: Vec<String> =
+        (0..TOPICS).map(|index| format!("site{}/device{}/sensor{index}", index % 10, index % 500)).collect();
+    let batch = topics.iter().map(|topic| message(topic, r#"{"value":21.5,"unit":"C"}"#, 0)).collect();
+    state.handle_event(Event::Messages(batch));
+    state.apply(Action::SetExpandedRecursive(TopicTree::ROOT, true));
+    assert_eq!(state.tree.rows().len(), TOPICS + 10 + 500);
+    let mut harness = harness(state);
+
+    let started = std::time::Instant::now();
+    for frame in 0..FRAMES {
+        // 5 000 messages per second at 60 frames per second is roughly 85 messages per frame.
+        let offset = frame as usize * 85;
+        let batch = (0..85).map(|index| message(&topics[(offset + index) % TOPICS], r#"{"value":22.0}"#, 1)).collect();
+        harness.state_mut().handle_event(Event::Messages(batch));
+        harness.run_steps(1);
+    }
+    let per_frame = started.elapsed() / FRAMES;
+    println!("average frame with {TOPICS} topics: {per_frame:?}");
+    // Generous for unoptimised builds and coverage runs; an optimised build takes well under a millisecond.
+    assert!(per_frame < std::time::Duration::from_millis(250), "a frame took {per_frame:?}");
+}
