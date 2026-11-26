@@ -6,7 +6,8 @@
 |---|---|
 | `crates/mqtt-viewer-core` | Connection worker, topic tree, decoders, recording, history store. No UI code. |
 | `apps/mqtt-viewer` | The egui application. `state.rs` holds all behaviour; `ui/` only draws it. |
-| `scripts/` | Release and screenshot helpers. |
+| `assets/` | The icon files and what the packages need: the Linux desktop entry and the macOS `Info.plist`. |
+| `scripts/` | Release, packaging, icon and screenshot helpers. |
 | `docs/` | Screenshots used by the README. |
 
 ## Building
@@ -83,6 +84,19 @@ scripts/screenshots.sh
 renders the README screenshots into `docs/`. It needs a machine with a GPU, which is why the test behind it is
 ignored by default. Run it after changing the look of the UI.
 
+### Icon
+
+The icon is drawn by `apps/mqtt-viewer/src/icon.rs`. The files in `assets/` are generated from it, and a test
+fails while they are outdated. After changing the drawing, run
+
+```sh
+scripts/icons.sh
+```
+
+A Windows build embeds `assets/icon.ico` and the version into the executable. That needs a resource compiler
+(`rc.exe` on Windows, `llvm-rc` when cross-compiling); without one the build still succeeds, with a warning and
+without the icon.
+
 ## Commits
 
 Use [conventional commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, `ci:` ...). The changelog and
@@ -91,16 +105,27 @@ the next version number are derived from them.
 ## Releasing
 
 ```sh
-scripts/release_version.sh      # or scripts/release_version.ps1 on Windows
+scripts/release_version.sh          # or scripts/release_version.ps1 on Windows
+scripts/release_version.sh 1.0.0    # to choose the version yourself
 ```
 
 The script needs [git-cliff](https://git-cliff.org) and `cargo-verset`. It
 
-1. computes the next version from the commits since the last tag,
+1. computes the next version from the commits since the last tag, unless one is given,
 2. sets it in the workspace `Cargo.toml`,
 3. regenerates `CHANGELOG.md`,
 4. commits as `release(<version>)`, tags `<version>` and, after asking, pushes.
 
 The pushed tag starts `.github/workflows/release.yml`, which builds the Linux archive and cross-compiles the
-Windows one on Linux runners and attaches both to a GitHub release. There is no macOS archive: it cannot be
-cross-compiled from Linux, and macOS runners are deliberately not used.
+Windows one on Linux runners and attaches both to a GitHub release.
+
+The macOS disk image cannot be cross-compiled from Linux, and macOS runners are deliberately not used. Build it
+on a Mac from the tagged commit and attach it once the workflow has created the release:
+
+```sh
+scripts/bundle_macos.sh
+gh release upload <version> dist/mqtt-viewer-<version>-universal-apple-darwin.dmg
+```
+
+The script needs both Apple targets (`rustup target add aarch64-apple-darwin x86_64-apple-darwin`). It writes
+`dist/MQTT Viewer.app`, a universal binary signed ad hoc, and the disk image next to it.

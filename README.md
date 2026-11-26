@@ -1,4 +1,6 @@
-<h1 align="center">mqtt-viewer</h1>
+<p align="center"><img alt="" src="assets/icon.png" width="96"></p>
+
+<h1 align="center">MQTT Viewer</h1>
 
 <p align="center">
   A native MQTT client that shows everything on a broker as a live topic tree.<br>
@@ -21,8 +23,9 @@ It speaks MQTT 3.1.1 and 5, decodes binary payloads and records and replays sess
 
 | | |
 |---|---|
-| **Topic tree** | Collapsible hierarchy with message and subtopic counts, inline value previews and a flash on activity. Order by name, messages or topics; navigate with the keyboard; pause when it moves too fast. |
+| **Topic tree** | Collapsible hierarchy with message and subtopic counts, inline value previews and a flash on activity. Order by name, messages or topics; open new topics automatically down to a chosen depth; pause when it moves too fast. |
 | **Search** | Filter by topic and, optionally, by the latest payload. |
+| **Keyboard** | Arrow keys, Home and End move through the tree, Space pauses, Delete clears the selected retained message after a confirmation, Ctrl+F (Cmd+F on macOS) jumps to the search. |
 | **Values** | Decoded payload with JSON colouring, a raw hex dump, QoS, retain flag, timestamp and size. Diff against the previous message or any message from the history. |
 | **Decoders** | Text, JSON, hex, Base64, MessagePack, CBOR, Sparkplug B and Protobuf with your own `.proto` files. Detected automatically, overridable per topic. |
 | **Publish** | Raw, JSON, XML or hex payloads with validation, QoS and retain, a list of what you sent and named presets. MQTT 5 user properties, content type, response topic, correlation data and expiry. |
@@ -39,11 +42,24 @@ It speaks MQTT 3.1.1 and 5, decodes binary payloads and records and replays sess
 
 ## Install
 
-**Windows and Linux**: download the archive for your platform from the
-[releases page](https://github.com/bircni/mqtt-viewer/releases), unpack it and run `mqtt-viewer`. The Windows
-build is not signed, so SmartScreen asks for confirmation on the first start.
+Download the file for your platform from the [releases page](https://github.com/bircni/mqtt-viewer/releases).
+None of the builds is signed, so each system asks once before it starts the app.
 
-**macOS**, or any platform from source, with a [Rust toolchain](https://rustup.rs):
+**Windows**: unpack the `.zip` and run `mqtt-viewer.exe`. SmartScreen shows "Windows protected your PC"; choose
+**More info**, then **Run anyway**.
+
+**macOS** (Intel and Apple Silicon): open the `.dmg` and drag **MQTT Viewer** to **Applications**. On the first
+start macOS refuses to open it; allow it under **System Settings › Privacy & Security › Open Anyway**, or run
+`xattr -dr com.apple.quarantine "/Applications/MQTT Viewer.app"`.
+
+**Linux** (x86-64): unpack the `.tar.gz` and run `bin/mqtt-viewer`. To get the menu entry and the icon too,
+unpack it into your home directory instead:
+
+```sh
+tar -xzf mqtt-viewer-*-x86_64-unknown-linux-gnu.tar.gz -C ~/.local --strip-components=1
+```
+
+**From source**, on any platform with a [Rust toolchain](https://rustup.rs):
 
 ```sh
 git clone https://github.com/bircni/mqtt-viewer

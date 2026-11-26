@@ -14,3 +14,6 @@ All notable changes to this project will be documented in this file. See [conven
 - Charts for numeric topics and JSON fields
 - Session recording, JSON/CSV export and replay
 - Optional on-disk message history
+- New topics open automatically down to a configurable depth
+- Delete key for retained messages and a shortcut for the search
+- Application icon, Windows executable details, a macOS app bundle and a Linux desktop entry
