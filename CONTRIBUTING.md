@@ -38,7 +38,8 @@ The executable ends up in `target/x86_64-pc-windows-msvc/release/mqtt-viewer.exe
 
 ## Checks
 
-CI runs these on Linux; run them before opening a pull request:
+CI runs these on Linux; run them before opening a pull request. macOS and Windows are checked on request by the
+Platforms workflow (see [Releasing](#releasing)):
 
 ```sh
 cargo fmt --all -- --check
@@ -104,23 +105,42 @@ the next version number are derived from them.
 
 ## Releasing
 
+Tagging and pushing happen locally; the GitHub release is built in CI when the tag lands.
+
 ```sh
 scripts/release_version.sh          # or scripts/release_version.ps1 on Windows
 scripts/release_version.sh 1.0.0    # to choose the version yourself
 ```
 
-The script needs [git-cliff](https://git-cliff.org) and `cargo-verset`. It
+The script needs [git-cliff](https://git-cliff.org), `cargo-verset` and the GitHub CLI `gh`. It
 
-1. computes the next version from the commits since the last tag, unless one is given,
-2. sets it in the workspace `Cargo.toml`,
-3. regenerates `CHANGELOG.md`,
-4. commits as `release(<version>)`, tags `<version>` and, after asking, pushes.
+1. checks that you are on a clean `main` in sync with the remote and that the tag is free,
+2. starts the CI, Platforms and Publish workflows on that commit and waits for them, and stops before changing
+   anything if one fails (`--skip-checks` leaves this step out),
+3. computes the next version from the commits since the last tag, unless one is given,
+4. sets it in the workspace `Cargo.toml` and regenerates `CHANGELOG.md`,
+5. commits as `release(<version>)`, tags `<version>` and, after asking, pushes `main` and the tag together.
 
-The pushed tag starts `.github/workflows/release.yml`, which builds the Linux archive and cross-compiles the
-Windows one on Linux runners and attaches both to a GitHub release.
+### What the workflows do
 
-The macOS disk image cannot be cross-compiled from Linux, and macOS runners are deliberately not used. Build it
-on a Mac from the tagged commit and attach it once the workflow has created the release:
+| Workflow | Starts | Does |
+|---|---|---|
+| `ci.yml` | on pushes to `main`, on pull requests, on request | Format, lints, tests, hygiene and coverage, on Linux. |
+| `platforms.yml` | on request | Lints and tests on macOS and Windows runners. They cost far more than Linux ones, so they are not part of every push. |
+| `publish.yml` | on a version tag, on request | Builds the Linux archive and cross-compiles the Windows one, both on Linux runners. On a tag it also releases them. |
+
+Start one by hand from the Actions tab or with `gh workflow run publish.yml`. Started by hand, Publish builds
+and uploads the archives as workflow artifacts and releases nothing, which is the way to try a packaging change.
+
+On a tag, Publish first checks that the tag equals the version in `Cargo.toml`. After the builds it creates a
+draft release with the tag's `CHANGELOG.md` section as notes, uploads the archives and a `checksums.txt`, and
+only then makes the release public, so nobody finds it half uploaded. After a failure, re-run the failed jobs:
+the draft is reused and files with the same names are replaced.
+
+### macOS
+
+The macOS disk image cannot be cross-compiled from Linux, and a macOS runner is not spent on it. Build it on a
+Mac from the tagged commit and attach it once the workflow has created the release:
 
 ```sh
 scripts/bundle_macos.sh

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Builds "MQTT Viewer.app" for Intel and Apple Silicon and packs it into a disk image in dist/. The release
-# workflow runs on Linux and cannot do this, so the image is built on a Mac and attached to the release by hand:
+# Builds "MQTT Viewer.app" for Intel and Apple Silicon and packs it into a disk image in dist/. The Publish
+# workflow builds on Linux and cannot do this, so the image is built on a Mac and attached to the release by hand:
 #
 #     gh release upload <version> dist/mqtt-viewer-<version>-universal-apple-darwin.dmg
 #

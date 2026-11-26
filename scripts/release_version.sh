@@ -1,83 +1,124 @@
 #!/usr/bin/env bash
 #
-# Cuts a release: bumps the workspace version from the conventional commits since the last tag, regenerates
-# CHANGELOG.md, commits, tags and (after asking) pushes. The pushed tag starts the release workflow, which
+# Cuts a release: checks that the commit is fit to release, bumps the workspace version, regenerates
+# CHANGELOG.md, commits, tags and (after asking) pushes. The pushed tag starts the Publish workflow, which
 # builds the Linux and Windows archives and attaches them to a GitHub release.
 #
-# Usage: scripts/release_version.sh [version]
+# Usage: scripts/release_version.sh [version] [--skip-checks]
 #
-# Without an argument the version follows from the commits. Pass one to choose it yourself, as for the step
-# to 1.0.0, which no commit type asks for:
+# Without a version it follows from the conventional commits since the last tag. Pass one to choose it
+# yourself, as for the step to 1.0.0, which no commit type asks for:
 #
 #     scripts/release_version.sh 1.0.0
+#
+# Before anything is changed, the script starts the CI, Platforms and Publish workflows on the commit and
+# waits for them; Publish, started by hand, builds every release file without releasing. --skip-checks leaves
+# that out.
 
-set -e
+set -euo pipefail
 
-# Function to print errors only
 err() { echo "$@" 1>&2; }
 
 cd "$(dirname "$0")/.."
 
-# enable push with follow tags
-git config --global push.followTags true
+version=""
+skip_checks=false
+for argument in "$@"; do
+    case "$argument" in
+        --skip-checks) skip_checks=true ;;
+        -*) err "Unknown option $argument."; exit 1 ;;
+        *) version="$argument" ;;
+    esac
+done
 
-# Check if git-cliff is installed
-if ! command -v git-cliff &> /dev/null; then
-    err "git-cliff is not installed. Please install it first."
+for tool in git-cliff cargo-verset gh; do
+    if ! command -v "$tool" &> /dev/null; then
+        err "$tool is not installed. Please install it first."
+        exit 1
+    fi
+done
+
+# Only a clean main that matches the remote is released: the tag must name a commit CI has seen.
+if [ "$(git branch --show-current)" != "main" ]; then
+    err "Releases are cut from main."
     exit 1
 fi
-
-# Check if cargo-verset is installed
-if ! command -v cargo-verset &> /dev/null; then
-    err "cargo-verset is not installed. Please install it with:"
-    err "    cargo install cargo-verset"
-    exit 1
-fi
-
 if [ -n "$(git status --porcelain)" ]; then
     err "The working tree has uncommitted changes. Commit or stash them first."
     exit 1
 fi
+git fetch --quiet --tags origin main
+commit="$(git rev-parse HEAD)"
+if [ "$commit" != "$(git rev-parse origin/main)" ]; then
+    err "main and origin/main differ. Push or pull first."
+    exit 1
+fi
 
 # git-cliff reads pull request data from GitHub; with a token it is not cut off by the rate limit.
-if [ -z "${GITHUB_TOKEN:-}" ] && command -v gh &> /dev/null; then
+if [ -z "${GITHUB_TOKEN:-}" ]; then
     GITHUB_TOKEN="$(gh auth token 2> /dev/null || true)"
     export GITHUB_TOKEN
 fi
 
-# The version given on the command line, or else the bumped version from git-cliff. There is no current
-# version before the first release.
-version="${1:-$(git-cliff --bumped-version)}"
+if [ -z "$version" ]; then
+    version="$(git-cliff --bumped-version)"
+fi
 if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     err "'$version' is not a version like 1.2.3."
     exit 1
 fi
-current_version=$(git describe --tags --abbrev=0 2> /dev/null || true)
+if git rev-parse --quiet --verify "refs/tags/$version" > /dev/null; then
+    err "The tag $version exists already."
+    exit 1
+fi
+echo "Version to release: $version"
 
-# if the version is the same as the current version, exit
-if [ "$version" == "$current_version" ]; then
-    echo "Version $version is already the current version. No changes made."
-    exit 0
+# Starts a workflow on the commit and prints the identifier of its run.
+start_workflow() {
+    local workflow="$1" started run
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    gh workflow run "$workflow" --ref main > /dev/null
+    for _ in $(seq 1 30); do
+        sleep 2
+        run="$(gh run list --workflow "$workflow" --event workflow_dispatch --commit "$commit" \
+            --created ">=$started" --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+        if [ -n "$run" ]; then
+            echo "$run"
+            return 0
+        fi
+    done
+    err "The run of $workflow did not appear."
+    return 1
+}
+
+if [ "$skip_checks" = false ]; then
+    echo "Starting the CI, Platforms and Publish workflows on $commit..."
+    runs=()
+    for workflow in ci.yml platforms.yml publish.yml; do
+        runs+=("$(start_workflow "$workflow")")
+    done
+    for run in "${runs[@]}"; do
+        if ! gh run watch "$run" --exit-status > /dev/null; then
+            err "A workflow failed: $(gh run view "$run" --json url --jq .url)"
+            err "Nothing was changed."
+            exit 1
+        fi
+    done
+    echo "All workflows passed."
 fi
 
-echo "Version to release: $version"
 echo "Updating version in Cargo.toml..."
 cargo verset package "$version"
-echo "Version updated successfully in Cargo.toml."
 
-# Generate the changelog
 echo "Generating changelog..."
 git cliff --output CHANGELOG.md -t "$version"
-echo "Changelog generated successfully."
 
 echo "Building the project to update Cargo.lock..."
 if ! cargo build --release --quiet; then
     err "Build failed. Please fix the issues and try again."
     exit 1
 fi
-echo "Project built successfully."
 
-# Ask for confirmation before committing
 echo "Please review the changes in Cargo.toml, Cargo.lock and CHANGELOG.md."
 echo "Do you want to commit the changes? (y/n)"
 read -r answer
@@ -86,20 +127,17 @@ if [ "$answer" != "y" ]; then
     exit 0
 fi
 
-# Commit changes
 git add Cargo.toml Cargo.lock CHANGELOG.md
 git commit -m "release($version)"
 git tag -a "$version" -m "Release $version"
-
 echo "Changes committed and tagged with version $version."
-echo "Don't forget to push the changes to the remote repository."
 
-# Ask for confirmation before pushing
 echo "Do you want to push the changes? (y/n)"
 read -r answer
 if [ "$answer" != "y" ]; then
-    echo "Changes not pushed. Exiting."
+    echo "Changes not pushed. Push them with: git push --atomic origin main $version"
     exit 0
 fi
-git push
-echo "Changes pushed successfully."
+# Both or neither: a tag without its commit on main would release something main does not contain.
+git push --atomic origin main "$version"
+echo "Changes pushed successfully. The Publish workflow builds the release now."

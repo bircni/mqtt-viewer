@@ -1,0 +1,191 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+  # Builds and checks every release file without releasing anything.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Check the version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - id: version
+        run: |
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          if [[ -z "$version" ]]; then
+            echo "::error::no version found in Cargo.toml"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_TYPE" == tag && "$version" != "$GITHUB_REF_NAME" ]]; then
+            echo "::error::$GITHUB_REF_NAME does not match version $version in Cargo.toml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Build the Linux archive
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+
+      - name: Install Linux packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Build
+        run: cargo build --release --locked -p mqtt-viewer
+
+      # Laid out like an installation prefix: unpack it anywhere and run bin/mqtt-viewer, or unpack it into
+      # ~/.local to get the menu entry and the icon as well.
+      - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          name="mqtt-viewer-$VERSION-x86_64-unknown-linux-gnu"
+          install -Dm755 target/release/mqtt-viewer "$name/bin/mqtt-viewer"
+          install -Dm644 assets/mqtt-viewer.desktop "$name/share/applications/mqtt-viewer.desktop"
+          install -Dm644 assets/icon.png "$name/share/icons/hicolor/512x512/apps/mqtt-viewer.png"
+          install -Dm644 -t "$name/share/doc/mqtt-viewer" LICENSE README.md CHANGELOG.md
+          mkdir out
+          tar -czvf "out/$name.tar.gz" "$name"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-linux-x64
+          path: out
+          if-no-files-found: error
+
+  # Cross-compiled on Linux: Windows runners cost twice as much and are not needed for this.
+  windows:
+    name: Build the Windows archive
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      # Use the TLS library's prebuilt assembly objects instead of requiring NASM.
+      AWS_LC_SYS_PREBUILT_NASM: 1
+      # Fail rather than ship an executable without its icon.
+      MQTT_VIEWER_REQUIRE_RESOURCES: 1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      # clang-cl, lld-link, llvm-lib and llvm-rc stand in for the MSVC tools.
+      - name: Install LLVM
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
+
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2
+        with:
+          tool: cargo-xwin
+
+      - name: Build
+        run: cargo xwin build --release --locked -p mqtt-viewer --target x86_64-pc-windows-msvc
+
+      - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir out
+          zip -j "out/mqtt-viewer-$VERSION-x86_64-pc-windows-msvc.zip" \
+            target/x86_64-pc-windows-msvc/release/mqtt-viewer.exe LICENSE README.md CHANGELOG.md
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-windows-x64
+          path: out
+          if-no-files-found: error
+
+  # A draft first, so nobody finds a release with half of its files.
+  draft-release:
+    name: Draft GitHub release
+    if: github.ref_type == 'tag'
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: CHANGELOG.md
+
+      - name: Extract GitHub release notes
+        run: |
+          awk -v heading="## [$GITHUB_REF_NAME]" '
+            /^## \[/ { printing = index($0, heading) == 1; next }
+            printing
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for $GITHUB_REF_NAME"
+            exit 1
+          fi
+          printf '\nThe builds are not signed: Windows SmartScreen and macOS Gatekeeper ask before the first start. The Linux archive is built on Ubuntu for x86_64. The macOS disk image is built separately and attached after the other files.\n' >> release-notes.md
+
+      - name: Download the packages
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: package-*
+          path: packages
+          merge-multiple: true
+
+      - name: Write the checksums
+        run: cd packages && sha256sum mqtt-viewer-* > checksums.txt
+
+      - name: Create or update the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # A re-run finds the draft, or the release an earlier attempt finished.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "v$GITHUB_REF_NAME" \
+              --notes-file release-notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --draft \
+              --title "v$GITHUB_REF_NAME" \
+              --notes-file release-notes.md
+          fi
+
+      - name: Upload files to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber packages/*
+
+  release:
+    name: Publish GitHub release
+    needs: draft-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
