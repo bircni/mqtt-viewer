@@ -77,10 +77,12 @@ pub enum Dialog {
     Connect(Box<ConnectDialog>),
     /// Application settings, edited as a draft.
     Settings(Box<Settings>),
-    /// Confirmation before deleting several retained topics.
+    /// Confirmation before deleting retained topics.
     ConfirmDelete {
         /// Node the deletion started from.
         node: NodeId,
+        /// Whether everything below the node goes as well.
+        recursive: bool,
         /// Topics that will be cleared.
         topics: Vec<String>,
     },
@@ -170,6 +172,11 @@ pub enum Action {
     Navigate(Navigate),
     /// The search fields changed.
     SearchChanged,
+    /// Put the keyboard focus into the search box.
+    FocusSearch,
+    /// Clear the retained message of the selected topic or, when it has no value of its own, of everything
+    /// below it.
+    DeleteSelected,
     /// Change the sibling ordering.
     SetOrder(TreeOrder),
     /// Pause or resume applying incoming messages.
@@ -282,6 +289,7 @@ struct DiffView {
 
 /// The whole application state.
 #[derive(Debug)]
+#[expect(clippy::struct_excessive_bools, reason = "independent flags of unrelated parts of the UI")]
 pub struct AppState {
     /// Persistent configuration.
     pub config: AppConfig,
@@ -331,6 +339,8 @@ pub struct AppState {
     pub files: Box<dyn FilePicker>,
     /// Set when the selection moved by keyboard, so the tree scrolls it into view once.
     pub reveal_selection: bool,
+    /// Set when the search box should take the keyboard focus on the next frame.
+    pub focus_search: bool,
     commands: Vec<Command>,
 }
 
@@ -368,9 +378,11 @@ impl AppState {
             pending_deletes: HashSet::new(),
             files: Box::new(crate::ui::NativePicker),
             reveal_selection: false,
+            focus_search: false,
             commands: Vec::new(),
         };
         state.tree.set_order(state.config.settings.tree_order);
+        state.tree.set_auto_expand(state.config.settings.auto_expand_depth);
         state.reload_decoder();
         state.sync_store();
         state
@@ -712,6 +724,17 @@ impl AppState {
             Action::SetExpandedRecursive(node, expanded) => self.tree.set_expanded_recursive(node, expanded),
             Action::Navigate(direction) => self.navigate(direction),
             Action::SearchChanged => self.tree.set_filter(Filter::new(self.search_text.trim(), self.search_payload)),
+            Action::FocusSearch => self.focus_search = true,
+            Action::DeleteSelected => {
+                // A key is pressed more easily than a button, so this path always asks first.
+                if let Some(node) = self.selected.filter(|id| self.tree.contains(*id)) {
+                    let recursive = self.tree.node(node).last().is_none();
+                    let topics = self.tree.topics_with_values(node, recursive);
+                    if !topics.is_empty() {
+                        self.dialog = Dialog::ConfirmDelete { node, recursive, topics };
+                    }
+                }
+            }
             Action::SetOrder(order) => {
                 self.tree.set_order(order);
                 self.config.settings.tree_order = order;
@@ -786,14 +809,14 @@ impl AppState {
                 }
                 let topics = self.tree.topics_with_values(node, recursive);
                 if topics.len() > 1 {
-                    self.dialog = Dialog::ConfirmDelete { node, topics };
+                    self.dialog = Dialog::ConfirmDelete { node, recursive, topics };
                 } else {
                     self.delete_retained(node, recursive, topics);
                 }
             }
             Action::ConfirmDelete => {
-                if let Dialog::ConfirmDelete { node, topics } = std::mem::take(&mut self.dialog) {
-                    self.delete_retained(node, true, topics);
+                if let Dialog::ConfirmDelete { node, recursive, topics } = std::mem::take(&mut self.dialog) {
+                    self.delete_retained(node, recursive, topics);
                 }
             }
             Action::SetValueMode(mode) => self.value_mode = mode,
@@ -854,6 +877,7 @@ impl AppState {
                     self.config.settings = *draft;
                     self.tree.set_limits(limits(&self.config.settings));
                     self.tree.set_order(self.config.settings.tree_order);
+                    self.tree.set_auto_expand(self.config.settings.auto_expand_depth);
                     self.sync_store();
                     if let Some(store) = &self.store {
                         store.prune(retention(&self.config.settings));

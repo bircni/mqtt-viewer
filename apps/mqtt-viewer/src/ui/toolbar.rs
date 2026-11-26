@@ -38,6 +38,9 @@ pub fn top(ui: &mut egui::Ui, state: &mut AppState, actions: &mut Vec<Action>) {
         let search = ui
             .add(TextEdit::singleline(&mut state.search_text).hint_text("Search topics…").desired_width(220.0))
             .accessible_name("Search topics");
+        if std::mem::take(&mut state.focus_search) {
+            search.request_focus();
+        }
         let payload = ui.checkbox(&mut state.search_payload, "values").on_hover_text("Also search the latest payloads");
         if search.changed() || payload.changed() {
             actions.push(Action::SearchChanged);

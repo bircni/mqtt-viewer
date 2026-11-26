@@ -379,6 +379,30 @@ fn deleting_a_retained_topic_publishes_an_empty_retained_message() {
 }
 
 #[test]
+fn the_delete_key_always_asks_first() {
+    let mut state = state();
+    connect(&mut state);
+    state.apply(Action::DeleteSelected);
+    assert_eq!(state.dialog, Dialog::None, "nothing is selected");
+
+    receive(&mut state, &[("a", "0"), ("a/b", "1"), ("a/c", "2"), ("d/e", "3")]);
+    select(&mut state, "a");
+    state.apply(Action::DeleteSelected);
+    let Dialog::ConfirmDelete { recursive, topics, .. } = &state.dialog else { panic!("expected a confirmation") };
+    assert_eq!((*recursive, topics.as_slice()), (false, ["a".to_owned()].as_slice()), "only the topic's own value");
+    state.apply(Action::ConfirmDelete);
+    assert_eq!(published(&mut state), [PublishRequest::delete_retained("a")]);
+    assert!(state.tree.find("a/b").is_some(), "the subtopics stay");
+
+    // A level without a value of its own stands for everything below it.
+    select(&mut state, "d");
+    state.apply(Action::DeleteSelected);
+    assert!(matches!(&state.dialog, Dialog::ConfirmDelete { recursive: true, topics, .. } if topics == &["d/e"]));
+    state.apply(Action::CloseDialog);
+    assert!(state.tree.find("d/e").is_some());
+}
+
+#[test]
 fn deleting_several_topics_asks_first() {
     let mut state = state();
     connect(&mut state);
@@ -632,12 +656,17 @@ fn settings_are_applied_and_saved() {
     draft.history_cap = 3;
     draft.tree_order = TreeOrder::Topics;
     draft.memory_budget_mb = 16;
+    draft.auto_expand_depth = 1;
     state.apply(Action::ApplySettings);
     assert_eq!(state.dialog, Dialog::None);
     assert_eq!(state.tree.node(state.tree.find("t").unwrap()).history().len(), 3);
     assert_eq!(state.tree.order(), TreeOrder::Topics);
     assert_eq!(state.tree.limits().total_bytes, 16 * 1024 * 1024);
     assert_eq!(AppConfig::load(&path).unwrap().settings.history_cap, 3);
+    receive(&mut state, &[("new/topic", "1")]);
+    assert!(state.tree.node(state.tree.find("new").unwrap()).is_expanded(), "new levels open by themselves");
+    let restarted = AppState::new(AppConfig::load(&path).unwrap(), None, None);
+    assert_eq!(restarted.config.settings.auto_expand_depth, 1);
 
     // Cancelling discards the draft.
     state.apply(Action::OpenSettings);

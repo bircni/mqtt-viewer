@@ -137,6 +137,29 @@ fn new_topics_appear_without_touching_expansion() {
 }
 
 #[test]
+fn new_levels_open_by_themselves_down_to_the_configured_depth() {
+    let mut tree = TopicTree::default();
+    tree.set_auto_expand(2);
+    for topic in ["a/b/c/d", "e"] {
+        tree.insert(Message::new(topic, "v"));
+    }
+    assert_eq!(render(&mut tree), "-a\n  -b\n    +c\n e");
+
+    // Collapsing by hand sticks, and the setting survives a clear.
+    let a = tree.find("a").unwrap();
+    tree.set_expanded(a, false);
+    tree.insert(Message::new("a/x", "v"));
+    assert_eq!(render(&mut tree), "+a\n e");
+    tree.clear();
+    tree.insert(Message::new("f/g/h", "v"));
+    assert_eq!(render(&mut tree), "-f\n  -g\n     h");
+
+    tree.set_auto_expand(0);
+    tree.insert(Message::new("i/j", "v"));
+    assert_eq!(render(&mut tree), "-f\n  -g\n     h\n+i");
+}
+
+#[test]
 fn ordering_by_messages_and_topics() {
     let mut tree = tree_with(&["a/1", "b/1", "b/1", "b/1", "c/1", "c/2", "c/3", "c/4"]);
     assert_eq!(tree.order(), TreeOrder::Alphabetical);

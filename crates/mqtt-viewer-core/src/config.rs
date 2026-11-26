@@ -334,6 +334,8 @@ pub struct Settings {
     pub theme: Theme,
     /// Sibling ordering in the tree.
     pub tree_order: TreeOrder,
+    /// New topics less than this many levels deep start out expanded; 0 leaves the tree collapsed.
+    pub auto_expand_depth: usize,
     /// Whether rows flash when a message arrives.
     pub highlight_activity: bool,
     /// Timestamp rendering.
@@ -355,6 +357,7 @@ impl Default for Settings {
         Self {
             theme: Theme::System,
             tree_order: TreeOrder::Alphabetical,
+            auto_expand_depth: 0,
             highlight_activity: true,
             timestamp_format: TimestampFormat::Time,
             history_cap: 200,

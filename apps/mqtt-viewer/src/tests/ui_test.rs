@@ -221,6 +221,13 @@ fn search_filters_the_tree() {
     harness.get_by_label("garage");
     assert!(harness.query_by_label("$SYS").is_none(), "non-matching branches are hidden");
 
+    // The shortcut moves the focus into the search box, also from another text field.
+    input(&harness, "Publish topic").focus();
+    harness.run_steps(2);
+    harness.key_press_modifiers(eframe::egui::Modifiers::COMMAND, Key::F);
+    harness.run_steps(3);
+    assert!(input(&harness, "Search topics").is_focused());
+
     harness.state_mut().search_text = "nothing matches this".into();
     harness.state_mut().apply(Action::SearchChanged);
     harness.run_steps(3);
@@ -289,6 +296,8 @@ fn settings_can_be_changed_and_saved() {
     assert_eq!(harness.state().dialog, Dialog::None);
 
     click(&mut harness, "Settings");
+    harness.get_by_label(concat!("MQTT Viewer ", env!("CARGO_PKG_VERSION")));
+    harness.get_by_role_and_label(Role::SpinButton, "Expand new topics");
     click(&mut harness, "Clear stored history");
     click(&mut harness, "Cancel");
     assert_eq!(harness.state().dialog, Dialog::None);
@@ -310,6 +319,15 @@ fn deleting_a_subtree_asks_for_confirmation() {
     click(&mut harness, "Delete");
     assert_eq!(harness.state().tree.find("home"), None);
     assert_eq!(harness.state_mut().take_commands().len(), 9);
+
+    // The Delete key asks as well, even for a single topic.
+    let uptime = harness.state().tree.find("$SYS/broker/uptime");
+    harness.state_mut().apply(Action::Select(uptime));
+    harness.key_press(Key::Delete);
+    harness.run_steps(8);
+    harness.get_by_label("This clears the retained message of 1 topic on the broker:");
+    click(&mut harness, "Delete");
+    assert_eq!(harness.state().tree.find("$SYS/broker/uptime"), None);
 }
 
 #[test]

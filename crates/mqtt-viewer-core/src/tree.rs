@@ -249,6 +249,8 @@ pub struct TopicTree {
     rows_stale: bool,
     rows_built_at: Instant,
     refresh_interval: Duration,
+    /// Levels created at a depth below this start out expanded.
+    auto_expand: usize,
     next_seq: u64,
     /// Arrival order of stored entries, for budget eviction. May contain entries already evicted by the cap.
     arrival: VecDeque<(NodeId, u64)>,
@@ -281,6 +283,7 @@ impl TopicTree {
             rows_stale: false,
             rows_built_at: Instant::now(),
             refresh_interval: Self::DEFAULT_REFRESH_INTERVAL,
+            auto_expand: 0,
             next_seq: 0,
             arrival: VecDeque::new(),
             stats: TreeStats::default(),
@@ -293,6 +296,7 @@ impl TopicTree {
             order: self.order,
             filter: self.filter.clone(),
             refresh_interval: self.refresh_interval,
+            auto_expand: self.auto_expand,
             ..Self::new(self.limits)
         };
     }
@@ -371,11 +375,12 @@ impl TopicTree {
     /// Adds a message, creating its topic levels as needed, and returns the topic's node.
     pub fn insert(&mut self, message: Message) -> NodeId {
         let mut current = Self::ROOT;
-        for level in message.topic.split('/') {
+        for (depth, level) in message.topic.split('/').enumerate() {
             current = match self.child(current, level) {
                 Ok(existing) => existing,
                 Err(position) => {
                     let created = self.allocate(level, current);
+                    self.nodes[created.0].expanded = depth < self.auto_expand;
                     self.nodes[current.0].children.insert(position, created);
                     self.rows_dirty = true;
                     created
@@ -452,6 +457,12 @@ impl TopicTree {
                 node.alive && node.history.len() > 1 && node.history.front().is_some_and(|entry| entry.seq <= *seq)
             });
         }
+    }
+
+    /// How many levels of the tree open by themselves: topics created from now on start out expanded when
+    /// they are less than `depth` levels deep. 0 leaves everything collapsed.
+    pub const fn set_auto_expand(&mut self, depth: usize) {
+        self.auto_expand = depth;
     }
 
     /// Expands or collapses a node.

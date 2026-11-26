@@ -199,9 +199,7 @@ fn subscriptions_section(ui: &mut egui::Ui, draft: &mut ConnectionProfile) {
                 if ui.small_button("×").on_hover_text("Remove subscription").clicked() {
                     remove = Some(index);
                 }
-            })
-            .response
-            .accessible_name("Transport");
+            });
         }
         if let Some(index) = remove {
             draft.subscriptions.remove(index);
@@ -321,6 +319,14 @@ fn settings_dialog(ui: &mut egui::Ui, state: &AppState, draft: &mut Settings, ac
             });
             ui.end_row();
 
+            ui.label("Expand new topics");
+            ui.horizontal(|ui| {
+                ui.add(DragValue::new(&mut draft.auto_expand_depth).range(0..=32).suffix(" levels"))
+                    .accessible_name("Expand new topics");
+                ui.weak("0 leaves the tree collapsed");
+            });
+            ui.end_row();
+
             ui.label("Activity");
             ui.checkbox(&mut draft.highlight_activity, "Highlight topics when a message arrives");
             ui.end_row();
@@ -380,6 +386,10 @@ fn settings_dialog(ui: &mut egui::Ui, state: &AppState, draft: &mut Settings, ac
         if ui.button("Cancel").clicked() {
             actions.push(Action::CloseDialog);
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.hyperlink_to("Website", env!("CARGO_PKG_REPOSITORY"));
+            ui.weak(concat!("MQTT Viewer ", env!("CARGO_PKG_VERSION")));
+        });
     });
 }
 
@@ -438,7 +448,10 @@ fn protobuf_settings(ui: &mut egui::Ui, state: &AppState, actions: &mut Vec<Acti
 fn confirm_delete(ui: &mut egui::Ui, topics: &[String], actions: &mut Vec<Action>) {
     ui.set_width(460.0);
     ui.heading("Delete retained messages");
-    ui.label(format!("This clears the retained message of {} topics on the broker:", topics.len()));
+    ui.label(format!(
+        "This clears the retained message of {} on the broker:",
+        crate::format::plural(topics.len() as u64, "topic")
+    ));
     ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
         for topic in topics.iter().take(200) {
             ui.monospace(topic);

@@ -8,7 +8,7 @@ mod theme;
 mod toolbar;
 mod tree;
 
-use eframe::egui::{self, Align2, Key, Panel, RichText};
+use eframe::egui::{self, Align2, Key, Modifiers, Panel, RichText};
 
 pub use self::native_picker::NativePicker;
 use crate::state::{Action, AppState, Dialog, Navigate};
@@ -51,6 +51,10 @@ fn keyboard(ui: &egui::Ui, state: &AppState, actions: &mut Vec<Action>) {
         }
         return;
     }
+    // Works from anywhere, also while another field has the focus.
+    if ctx.input_mut(|input| input.consume_key(Modifiers::COMMAND, Key::F)) {
+        actions.push(Action::FocusSearch);
+    }
     if ctx.egui_wants_keyboard_input() {
         return;
     }
@@ -70,6 +74,9 @@ fn keyboard(ui: &egui::Ui, state: &AppState, actions: &mut Vec<Action>) {
         }
         if input.key_pressed(Key::Space) {
             actions.push(Action::TogglePause);
+        }
+        if input.key_pressed(Key::Delete) || input.key_pressed(Key::Backspace) {
+            actions.push(Action::DeleteSelected);
         }
     });
 }
