@@ -5,13 +5,13 @@ use std::fmt::Write as _;
 use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use mqtt_viewer_core::config::{ConnectionProfile, ProtocolVersion, Subscription, Transport};
 use mqtt_viewer_core::connection::{Command, Connection, ConnectionState, Event};
-use mqtt_viewer_core::message::Message;
+use mqtt_viewer_core::message::{Message, PublishRequest};
 use rumqttc::tokio_rustls::TlsAcceptor;
 use rumqttc::tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rumqttc::tokio_rustls::rustls::{self, ServerConfig};
@@ -253,6 +253,19 @@ impl Client {
         let mut client = Self::new();
         client.send(Command::Connect(Box::new(profile.clone())));
         client.wait_state(&ConnectionState::Connected);
+        client
+    }
+
+    /// A client that is connected with `profile` and that the broker delivers to already. `Connected` is
+    /// reported on the broker's greeting, before the subscriptions are in place there, so a message that
+    /// another client publishes right afterwards can be lost. A message of its own cannot: the broker handles
+    /// it after the subscriptions, so once it is back, they are active. `profile` must subscribe to `test/#`.
+    pub fn listening(profile: &ConnectionProfile) -> Self {
+        static PROBES: AtomicUsize = AtomicUsize::new(0);
+        let mut client = Self::connected(profile);
+        let topic = format!("test/listening/{}", PROBES.fetch_add(1, Ordering::Relaxed));
+        client.send(Command::Publish(PublishRequest { topic: topic.clone(), ..Default::default() }));
+        client.wait_message(&topic);
         client
     }
 

@@ -96,8 +96,8 @@ fn runtime_subscriptions_can_be_added_and_removed() {
 #[test]
 fn two_clients_see_each_others_messages() {
     let broker = TestBroker::start();
-    let mut alice = Client::connected(&ConnectionProfile { client_id: "alice".into(), ..broker.profile() });
-    let mut bob = Client::connected(&broker.profile());
+    let mut alice = Client::listening(&ConnectionProfile { client_id: "alice".into(), ..broker.profile() });
+    let mut bob = Client::listening(&broker.profile());
     alice.send(publish("test/chat", "hi bob"));
     assert_eq!(&bob.wait_message("test/chat").payload[..], b"hi bob");
     assert_eq!(&alice.wait_message("test/chat").payload[..], b"hi bob");
@@ -289,7 +289,7 @@ fn retained_messages_are_delivered_to_late_subscribers_and_can_be_deleted() {
 fn last_will_is_published_when_the_client_vanishes() {
     let broker = TestBroker::start();
     let proxy = TcpProxy::start(broker.v4);
-    let mut watcher = Client::connected(&broker.profile());
+    let mut watcher = Client::listening(&broker.profile());
     let will = LastWill { topic: "test/will".into(), payload: "gone".into(), qos: QoS::AtLeastOnce, retain: false };
     let _doomed = Client::connected(&ConnectionProfile { last_will: Some(will), ..profile_for(proxy.port) });
     proxy.cut();

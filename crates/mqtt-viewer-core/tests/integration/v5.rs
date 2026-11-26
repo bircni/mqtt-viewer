@@ -51,7 +51,7 @@ fn messages_without_properties_stay_plain() {
 #[test]
 fn v5_and_v3_clients_interoperate() {
     let broker = TestBroker::start();
-    let mut old = Client::connected(&broker.profile());
+    let mut old = Client::listening(&broker.profile());
     let mut new = Client::connected(&broker.v5_profile());
     // Without properties: the test broker cannot downgrade a v5 publish that carries any.
     new.send(Command::Publish(PublishRequest {
@@ -107,7 +107,7 @@ fn session_options_are_accepted() {
 fn v5_last_will_is_published() {
     let broker = TestBroker::start();
     let proxy = TcpProxy::start(broker.v5);
-    let mut watcher = Client::connected(&broker.v5_profile());
+    let mut watcher = Client::listening(&broker.v5_profile());
     let will = LastWill { topic: "test/v5-will".into(), payload: "gone".into(), qos: QoS::AtLeastOnce, retain: false };
     let doomed = ConnectionProfile { last_will: Some(will), protocol: ProtocolVersion::V5, ..profile_for(proxy.port) };
     let _doomed = Client::connected(&doomed);
