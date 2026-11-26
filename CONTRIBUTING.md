@@ -127,25 +127,18 @@ The script needs [git-cliff](https://git-cliff.org), `cargo-verset` and the GitH
 |---|---|---|
 | `ci.yml` | on pushes to `main`, on pull requests, on request | Format, lints, tests, hygiene and coverage, on Linux. |
 | `platforms.yml` | on request | Lints and tests on macOS and Windows runners. They cost far more than Linux ones, so they are not part of every push. |
-| `publish.yml` | on a version tag, on request | Builds the Linux archive and cross-compiles the Windows one, both on Linux runners. On a tag it also releases them. |
+| `publish.yml` | on a version tag, on request | Builds the Linux archive, the Windows archive and the macOS disk image, each on its own system. On a tag it also releases them. |
 
 Start one by hand from the Actions tab or with `gh workflow run publish.yml`. Started by hand, Publish builds
-and uploads the archives as workflow artifacts and releases nothing, which is the way to try a packaging change.
+and uploads the files as workflow artifacts and releases nothing, which is the way to try a packaging change.
 
 On a tag, Publish first checks that the tag equals the version in `Cargo.toml`. After the builds it creates a
-draft release with the tag's `CHANGELOG.md` section as notes, uploads the archives and a `checksums.txt`, and
+draft release with the tag's `CHANGELOG.md` section as notes, uploads the three files and a `checksums.txt`, and
 only then makes the release public, so nobody finds it half uploaded. After a failure, re-run the failed jobs:
 the draft is reused and files with the same names are replaced.
 
 ### macOS
 
-The macOS disk image cannot be cross-compiled from Linux, and a macOS runner is not spent on it. Build it on a
-Mac from the tagged commit and attach it once the workflow has created the release:
-
-```sh
-scripts/bundle_macos.sh
-gh release upload <version> dist/mqtt-viewer-<version>-universal-apple-darwin.dmg
-```
-
-The script needs both Apple targets (`rustup target add aarch64-apple-darwin x86_64-apple-darwin`). It writes
-`dist/MQTT Viewer.app`, a universal binary signed ad hoc, and the disk image next to it.
+`scripts/bundle_macos.sh` builds what the Publish workflow ships: `dist/MQTT Viewer.app`, a universal binary
+signed ad hoc, and the disk image next to it. It needs both Apple targets
+(`rustup target add aarch64-apple-darwin x86_64-apple-darwin`).
