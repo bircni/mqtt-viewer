@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=MQTT Viewer
+GenericName=MQTT Client
+Comment=Browse the topics of an MQTT broker as a live tree
+Exec=mqtt-viewer
+Icon=mqtt-viewer
+Terminal=false
+Categories=Development;Network;Monitor;
+Keywords=mqtt;iot;broker;topics;
+StartupWMClass=mqtt-viewer

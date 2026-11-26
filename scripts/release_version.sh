@@ -4,7 +4,12 @@
 # CHANGELOG.md, commits, tags and (after asking) pushes. The pushed tag starts the release workflow, which
 # builds the Linux and Windows archives and attaches them to a GitHub release.
 #
-# Usage: scripts/release_version.sh
+# Usage: scripts/release_version.sh [version]
+#
+# Without an argument the version follows from the commits. Pass one to choose it yourself, as for the step
+# to 1.0.0, which no commit type asks for:
+#
+#     scripts/release_version.sh 1.0.0
 
 set -e
 
@@ -40,8 +45,13 @@ if [ -z "${GITHUB_TOKEN:-}" ] && command -v gh &> /dev/null; then
     export GITHUB_TOKEN
 fi
 
-# Get the bumped version from git-cliff; there is no current version before the first release.
-version=$(git-cliff --bumped-version)
+# The version given on the command line, or else the bumped version from git-cliff. There is no current
+# version before the first release.
+version="${1:-$(git-cliff --bumped-version)}"
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    err "'$version' is not a version like 1.2.3."
+    exit 1
+fi
 current_version=$(git describe --tags --abbrev=0 2> /dev/null || true)
 
 # if the version is the same as the current version, exit
@@ -50,7 +60,7 @@ if [ "$version" == "$current_version" ]; then
     exit 0
 fi
 
-echo "Calculated version: $version"
+echo "Version to release: $version"
 echo "Updating version in Cargo.toml..."
 cargo verset package "$version"
 echo "Version updated successfully in Cargo.toml."

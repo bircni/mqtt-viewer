@@ -23,12 +23,18 @@ jobs:
       - name: Build mqtt-viewer
         run: cargo build --release --locked -p mqtt-viewer
 
+      # Laid out like an installation prefix: unpack it anywhere and run bin/mqtt-viewer, or unpack it into
+      # ~/.local to get the menu entry and the icon as well.
       - name: Build package
         id: package
         run: |
-          ARCHIVE="mqtt-viewer-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu.tar.gz"
-          tar -czvf "$ARCHIVE" -C target/release mqtt-viewer
-          echo "file=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          NAME="mqtt-viewer-${GITHUB_REF_NAME}-x86_64-unknown-linux-gnu"
+          install -Dm755 target/release/mqtt-viewer "$NAME/bin/mqtt-viewer"
+          install -Dm644 assets/mqtt-viewer.desktop "$NAME/share/applications/mqtt-viewer.desktop"
+          install -Dm644 assets/icon.png "$NAME/share/icons/hicolor/512x512/apps/mqtt-viewer.png"
+          install -Dm644 -t "$NAME/share/doc/mqtt-viewer" LICENSE README.md CHANGELOG.md
+          tar -czvf "$NAME.tar.gz" "$NAME"
+          echo "file=$NAME.tar.gz" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -43,12 +49,14 @@ jobs:
     env:
       # Use the TLS library's prebuilt assembly objects instead of requiring NASM.
       AWS_LC_SYS_PREBUILT_NASM: 1
+      # Fail rather than ship an executable without its icon.
+      MQTT_VIEWER_REQUIRE_RESOURCES: 1
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
-      # clang-cl, lld-link and llvm-lib stand in for the MSVC tools.
+      # clang-cl, lld-link, llvm-lib and llvm-rc stand in for the MSVC tools.
       - name: Install LLVM
         run: sudo apt-get update && sudo apt-get install -y clang lld llvm
       - uses: cargo-bins/cargo-binstall@v1.26.0
@@ -62,7 +70,7 @@ jobs:
         id: package
         run: |
           ARCHIVE="mqtt-viewer-${GITHUB_REF_NAME}-x86_64-pc-windows-msvc.zip"
-          zip -j "$ARCHIVE" target/x86_64-pc-windows-msvc/release/mqtt-viewer.exe
+          zip -j "$ARCHIVE" target/x86_64-pc-windows-msvc/release/mqtt-viewer.exe LICENSE README.md CHANGELOG.md
           echo "file=$ARCHIVE" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7

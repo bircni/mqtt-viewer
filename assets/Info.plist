@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template for the macOS application bundle; scripts/bundle_macos.sh fills in @VERSION@. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>MQTT Viewer</string>
+    <key>CFBundleDisplayName</key>
+    <string>MQTT Viewer</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.bircni.mqtt-viewer</string>
+    <key>CFBundleExecutable</key>
+    <string>mqtt-viewer</string>
+    <key>CFBundleIconFile</key>
+    <string>icon</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>MIT licensed</string>
+</dict>
+</plist>

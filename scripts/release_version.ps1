@@ -1,7 +1,14 @@
 # Cuts a release: bumps the workspace version from the conventional commits since the last tag, regenerates
 # CHANGELOG.md, commits and tags. Pushing the tag starts the release workflow.
 #
-# Usage: scripts/release_version.ps1
+# Usage: scripts/release_version.ps1 [version]
+#
+# Without an argument the version follows from the commits. Pass one to choose it yourself, as for the step
+# to 1.0.0, which no commit type asks for:
+#
+#     scripts/release_version.ps1 1.0.0
+
+param([string]$Version)
 
 Set-Location (Join-Path $PSScriptRoot "..")
 
@@ -35,7 +42,11 @@ if (-not $env:GITHUB_TOKEN -and (Get-Command gh -ErrorAction SilentlyContinue)) 
     $env:GITHUB_TOKEN = gh auth token 2>$null
 }
 
-$version = git cliff --bumped-version
+$version = if ($Version) { $Version } else { git cliff --bumped-version }
+if ($version -notmatch '^\d+\.\d+\.\d+$') {
+    Write-Host "'$version' is not a version like 1.2.3."
+    exit 1
+}
 # There is no current version before the first release.
 $current_version = git describe --tags --abbrev=0 2>$null
 # Check if the version is already the same as the current version
@@ -44,7 +55,7 @@ if ($version -eq $current_version) {
     exit 0
 }
 
-Write-Host "Calculated version: $version"
+Write-Host "Version to release: $version"
 Write-Host "Updating version in Cargo.toml..."
 # Update the version in Cargo.toml
 cargo verset package $version
