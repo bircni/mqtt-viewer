@@ -353,6 +353,8 @@ pub struct Settings {
     pub retention_days: u32,
     /// The database is pruned to stay under this many mebibytes; 0 disables the size limit.
     pub retention_mb: u32,
+    /// Whether the app connects to the last used profile when it starts.
+    pub connect_on_start: bool,
 }
 
 impl Default for Settings {
@@ -368,6 +370,7 @@ impl Default for Settings {
             persist_history: false,
             retention_days: 7,
             retention_mb: 512,
+            connect_on_start: true,
         }
     }
 }

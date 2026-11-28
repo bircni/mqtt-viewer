@@ -36,6 +36,54 @@ fn select(state: &mut AppState, topic: &str) {
 }
 
 #[test]
+fn starting_connects_to_the_last_profile_or_asks() {
+    let profile = ConnectionProfile { name: "Home".into(), ..ConnectionProfile::default() };
+    let mut config = AppConfig { profiles: vec![profile.clone()], ..AppConfig::default() };
+
+    // Nothing used yet: the dialog opens.
+    let mut fresh = AppState::new(config.clone(), None, None);
+    fresh.start();
+    assert!(matches!(fresh.dialog, Dialog::Connect(_)));
+    assert!(fresh.take_commands().is_empty());
+
+    // A last used profile is connected right away.
+    config.last_profile = Some(profile.id.clone());
+    let mut returning = AppState::new(config.clone(), None, None);
+    returning.start();
+    assert_eq!(returning.dialog, Dialog::None);
+    assert!(matches!(&returning.take_commands()[..], [Command::Connect(sent)] if sent.id == profile.id));
+
+    // Unless the setting is off.
+    config.settings.connect_on_start = false;
+    let mut cautious = AppState::new(config.clone(), None, None);
+    cautious.start();
+    assert!(matches!(cautious.dialog, Dialog::Connect(_)));
+    assert!(cautious.take_commands().is_empty());
+
+    // A last profile that was deleted from the file is ignored.
+    config.settings.connect_on_start = true;
+    config.last_profile = Some("gone".into());
+    let mut stale = AppState::new(config, None, None);
+    stale.start();
+    assert!(matches!(stale.dialog, Dialog::Connect(_)));
+}
+
+#[test]
+fn a_saved_profile_connects_by_id() {
+    let profile = ConnectionProfile { name: "Office".into(), ..ConnectionProfile::default() };
+    let mut state = AppState::new(AppConfig { profiles: vec![profile.clone()], ..AppConfig::default() }, None, None);
+    state.apply(Action::OpenConnectDialog);
+    state.apply(Action::ConnectProfile(profile.id.clone()));
+    assert_eq!(state.dialog, Dialog::None);
+    assert_eq!(state.config.last_profile.as_deref(), Some(profile.id.as_str()));
+    assert!(matches!(&state.take_commands()[..], [Command::Connect(sent)] if sent.id == profile.id));
+
+    state.apply(Action::ConnectProfile("missing".into()));
+    assert!(state.take_commands().is_empty());
+    assert_eq!(notices(&state), ["!That connection no longer exists"]);
+}
+
+#[test]
 fn profiles_can_be_created_edited_duplicated_and_deleted() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.toml");

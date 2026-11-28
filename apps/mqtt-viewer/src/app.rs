@@ -34,9 +34,7 @@ impl App {
     pub fn with_state(ctx: &egui::Context, mut state: AppState) -> std::io::Result<Self> {
         let repaint = ctx.clone();
         let connection = Connection::spawn(move || repaint.request_repaint())?;
-        if state.config.profiles.is_empty() || state.config.last_profile.is_none() {
-            state.apply(crate::state::Action::OpenConnectDialog);
-        }
+        state.start();
         Ok(Self { state, connection })
     }
 

@@ -160,6 +160,8 @@ pub enum Action {
     DeleteProfile(String),
     /// Save the draft and connect with it.
     Connect,
+    /// Connect with the saved profile having this identifier.
+    ConnectProfile(String),
     /// Disconnect from the broker.
     Disconnect,
     /// Select a topic, or nothing.
@@ -419,6 +421,16 @@ impl AppState {
             state.error(error);
         }
         state
+    }
+
+    /// What happens when the window opens: connect to the last used profile when the settings ask for it,
+    /// otherwise open the connection dialog.
+    pub fn start(&mut self) {
+        let last = self.config.last_profile.clone().filter(|id| self.config.profile(id).is_some());
+        match last {
+            Some(id) if self.config.settings.connect_on_start => self.apply(Action::ConnectProfile(id)),
+            Some(_) | None => self.apply(Action::OpenConnectDialog),
+        }
     }
 
     /// Takes the commands queued for the connection worker.
@@ -717,7 +729,15 @@ impl AppState {
                     dialog.draft = self.config.profiles.first().cloned().unwrap_or_default();
                 }
             }
-            Action::Connect => self.connect(),
+            Action::Connect => {
+                if let Some(profile) = self.store_draft() {
+                    self.connect(profile);
+                }
+            }
+            Action::ConnectProfile(id) => match self.config.profile(&id).cloned() {
+                Some(profile) => self.connect(profile),
+                None => self.error("That connection no longer exists"),
+            },
             Action::Disconnect => self.commands.push(Command::Disconnect),
             Action::Select(selection) => self.select(selection),
             Action::SetExpanded(node, expanded) => self.tree.set_expanded(node, expanded),
@@ -954,8 +974,11 @@ impl AppState {
         Some(draft)
     }
 
-    fn connect(&mut self) {
-        let Some(profile) = self.store_draft() else { return };
+    fn connect(&mut self, profile: ConnectionProfile) {
+        if let Err(error) = profile.validate() {
+            self.error(format!("Profile is incomplete: {error}"));
+            return;
+        }
         self.dialog = Dialog::None;
         self.config.last_profile = Some(profile.id.clone());
         self.save_config();
