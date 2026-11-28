@@ -197,6 +197,31 @@ fn filter_keeps_matches_and_their_ancestors() {
 }
 
 #[test]
+fn wildcard_searches_match_like_subscriptions() {
+    let mut tree =
+        tree_with(&["home/kitchen/temp", "home/Hall/temp", "home/hall/temp/raw", "office/temp", "$SYS/temp"]);
+    tree.set_filter(Filter::new("home/+/TEMP", false));
+    assert!(tree.filter().is_wildcard());
+    // home/hall/temp is a level without a value of its own: shown, but not a topic to act on.
+    assert_eq!(render(&mut tree), "-home\n  -Hall\n     temp\n  -hall\n     temp\n  -kitchen\n     temp");
+    assert_eq!(tree.matching_topics(), ["home/Hall/temp", "home/kitchen/temp"]);
+
+    // '#' takes the level itself and everything below; a leading wildcard skips '$' topics as MQTT does.
+    tree.set_filter(Filter::new("+/temp", false));
+    assert_eq!(tree.matching_topics(), ["office/temp"]);
+    tree.set_filter(Filter::new("home/hall/#", false));
+    assert_eq!(tree.matching_topics(), ["home/Hall/temp", "home/hall/temp/raw"]);
+
+    // Not a valid filter: a plain substring search.
+    tree.set_filter(Filter::new("te#mp", false));
+    assert!(!tree.filter().is_wildcard());
+    assert_eq!(tree.matching_topics(), Vec::<String>::new());
+
+    tree.set_filter(Filter::default());
+    assert!(tree.matching_topics().is_empty(), "no filter, no matches");
+}
+
+#[test]
 fn filter_can_search_payloads() {
     let mut tree = TopicTree::default();
     tree.set_refresh_interval(Duration::ZERO);

@@ -10,11 +10,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
-use mqtt_viewer_core::config::{AppConfig, ConnectionProfile, ProtoBinding, PublishPreset, Settings, TreeOrder};
+use mqtt_viewer_core::config::{
+    AppConfig, ConnectionProfile, ProtoBinding, PublishPreset, Settings, Subscription, TreeOrder,
+};
 use mqtt_viewer_core::connection::{Command, ConnectionState, Event};
 use mqtt_viewer_core::decode::{Decoded, Decoder, Format, ProtoRegistry};
 use mqtt_viewer_core::diff::{self, DiffLine};
-use mqtt_viewer_core::message::{Message, PublishRequest};
+use mqtt_viewer_core::message::{Message, PublishRequest, QoS};
 use mqtt_viewer_core::numeric;
 use mqtt_viewer_core::record::{self, RecordedMessage, Recorder, ReplayOptions};
 use mqtt_viewer_core::stats::RateMeter;
@@ -79,10 +81,6 @@ pub enum Dialog {
     Settings(Box<Settings>),
     /// Confirmation before deleting retained topics.
     ConfirmDelete {
-        /// Node the deletion started from.
-        node: NodeId,
-        /// Whether everything below the node goes as well.
-        recursive: bool,
         /// Topics that will be cleared.
         topics: Vec<String>,
     },
@@ -206,8 +204,14 @@ pub enum Action {
         /// Whether to include everything below.
         recursive: bool,
     },
+    /// Clear the retained messages of every topic the search matches, after a confirmation.
+    DeleteMatches,
     /// Go ahead with the deletion the confirmation dialog describes.
     ConfirmDelete,
+    /// Subscribe to another filter on the running connection.
+    Subscribe(Subscription),
+    /// Drop a subscription of the running connection.
+    Unsubscribe(String),
     /// Switch the value panel's view.
     SetValueMode(ValueMode),
     /// Compare the selected topic's latest value with the history entry having this sequence number;
@@ -751,7 +755,7 @@ impl AppState {
                     let recursive = self.tree.node(node).last().is_none();
                     let topics = self.tree.topics_with_values(node, recursive);
                     if !topics.is_empty() {
-                        self.dialog = Dialog::ConfirmDelete { node, recursive, topics };
+                        self.dialog = Dialog::ConfirmDelete { topics };
                     }
                 }
             }
@@ -829,14 +833,31 @@ impl AppState {
                 }
                 let topics = self.tree.topics_with_values(node, recursive);
                 if topics.len() > 1 {
-                    self.dialog = Dialog::ConfirmDelete { node, recursive, topics };
+                    self.dialog = Dialog::ConfirmDelete { topics };
                 } else {
-                    self.delete_retained(node, recursive, topics);
+                    self.delete_retained(topics);
+                }
+            }
+            Action::DeleteMatches => {
+                let topics = self.tree.matching_topics();
+                if topics.is_empty() {
+                    self.info("No matching topic holds a retained message");
+                } else {
+                    self.dialog = Dialog::ConfirmDelete { topics };
                 }
             }
             Action::ConfirmDelete => {
-                if let Dialog::ConfirmDelete { node, recursive, topics } = std::mem::take(&mut self.dialog) {
-                    self.delete_retained(node, recursive, topics);
+                if let Dialog::ConfirmDelete { topics } = std::mem::take(&mut self.dialog) {
+                    self.delete_retained(topics);
+                }
+            }
+            Action::Subscribe(subscription) => self.subscribe(&subscription.filter, subscription.qos),
+            Action::Unsubscribe(filter) => {
+                if let Some(profile) = &mut self.profile
+                    && self.connection.is_active()
+                {
+                    profile.subscriptions.retain(|existing| existing.filter != filter);
+                    self.commands.push(Command::Unsubscribe(filter));
                 }
             }
             Action::SetValueMode(mode) => self.value_mode = mode,
@@ -1034,20 +1055,38 @@ impl AppState {
         }
     }
 
-    fn delete_retained(&mut self, node: NodeId, recursive: bool, topics: Vec<String>) {
-        if !self.tree.contains(node) {
-            return;
-        }
+    fn delete_retained(&mut self, topics: Vec<String>) {
         if self.connection != ConnectionState::Connected {
             self.error("Connect to a broker before deleting retained messages");
             return;
         }
         for topic in topics {
+            if let Some(node) = self.tree.find(&topic) {
+                // Only the value goes; levels left empty are pruned, subtopics stay.
+                self.tree.remove(node, false);
+            }
             self.commands.push(Command::Publish(PublishRequest::delete_retained(topic.clone())));
             self.pending_deletes.insert(topic);
         }
-        self.tree.remove(node, recursive);
         self.selected = self.selected.filter(|id| self.tree.contains(*id));
+    }
+
+    /// Adds a subscription to the running connection. It lasts for this connection only; the saved profile
+    /// keeps its own list.
+    fn subscribe(&mut self, filter: &str, qos: QoS) {
+        let filter = filter.trim().to_owned();
+        if let Err(error) = mqtt_viewer_core::topic::validate_filter(&filter) {
+            self.error(error);
+            return;
+        }
+        let Some(profile) = self.profile.as_mut().filter(|_| self.connection.is_active()) else {
+            self.error("Connect to a broker before subscribing");
+            return;
+        };
+        let subscription = Subscription { filter, qos };
+        profile.subscriptions.retain(|existing| existing.filter != subscription.filter);
+        profile.subscriptions.push(subscription.clone());
+        self.commands.push(Command::Subscribe(subscription));
     }
 
     fn add_chart(&mut self, topic: String, pointer: String) {

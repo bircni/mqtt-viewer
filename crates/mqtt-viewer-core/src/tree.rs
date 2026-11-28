@@ -190,13 +190,32 @@ impl Default for HistoryLimits {
 pub struct Filter {
     text: String,
     match_payload: bool,
+    /// Whether `text` is an MQTT topic filter (`home/+/temperature`, `devices/#`) rather than a substring.
+    wildcard: bool,
 }
 
 impl Filter {
     /// A case-insensitive filter on the topic and, when `match_payload` is set, on the latest payload.
+    ///
+    /// Text with a `+` or `#` level that forms a valid topic filter matches topics the way a subscription
+    /// would, without looking at payloads; anything else matches as a substring of the topic.
     #[must_use]
     pub fn new(text: &str, match_payload: bool) -> Self {
-        Self { text: text.to_lowercase(), match_payload }
+        let text = text.to_lowercase();
+        let wildcard =
+            text.split('/').any(|level| level == "+" || level == "#") && crate::topic::validate_filter(&text).is_ok();
+        Self { text, match_payload, wildcard }
+    }
+
+    /// Whether the text is used as an MQTT topic filter.
+    #[must_use]
+    pub const fn is_wildcard(&self) -> bool {
+        self.wildcard
+    }
+
+    /// Whether the lowercased topic `path` matches.
+    fn matches_topic(&self, path: &str) -> bool {
+        if self.wildcard { crate::topic::matches(&self.text, path) } else { path.contains(&self.text) }
     }
 
     /// Whether the filter lets everything through.
@@ -541,6 +560,18 @@ impl TopicTree {
             .collect()
     }
 
+    /// Topics that hold a value and match the filter themselves (not only through a descendant), in tree order.
+    /// Empty while no filter is set.
+    #[must_use]
+    pub fn matching_topics(&self) -> Vec<String> {
+        let Some(visibility) = self.visibility() else { return Vec::new() };
+        self.subtree(Self::ROOT)
+            .into_iter()
+            .filter(|id| visibility[id.0] == Visibility::Matched && !self.nodes[id.0].history.is_empty())
+            .map(|id| self.topic(id))
+            .collect()
+    }
+
     /// Forgets the value and history of `id` (and of everything below it when `recursive`), then removes the
     /// levels that became empty.
     pub fn remove(&mut self, id: NodeId, recursive: bool) {
@@ -649,8 +680,9 @@ impl TopicTree {
     fn mark_visible(&self, id: NodeId, path: &mut String, visibility: &mut [Visibility]) -> bool {
         let node = &self.nodes[id.0];
         let matched = id != Self::ROOT
-            && (path.contains(&self.filter.text)
-                || (self.filter.match_payload
+            && (self.filter.matches_topic(path)
+                || (!self.filter.wildcard
+                    && self.filter.match_payload
                     && node.last().is_some_and(|entry| self.filter.matches_payload(&entry.payload))));
         let mut any_child = false;
         let base = path.len();

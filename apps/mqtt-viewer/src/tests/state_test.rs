@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
-use mqtt_viewer_core::config::{AppConfig, ConnectionProfile, ProtoBinding, TreeOrder};
+use mqtt_viewer_core::config::{AppConfig, ConnectionProfile, ProtoBinding, Subscription, TreeOrder};
 use mqtt_viewer_core::connection::{Command, ConnectionState, Event};
 use mqtt_viewer_core::decode::Format;
 use mqtt_viewer_core::message::{Message, PublishRequest};
@@ -436,8 +436,8 @@ fn the_delete_key_always_asks_first() {
     receive(&mut state, &[("a", "0"), ("a/b", "1"), ("a/c", "2"), ("d/e", "3")]);
     select(&mut state, "a");
     state.apply(Action::DeleteSelected);
-    let Dialog::ConfirmDelete { recursive, topics, .. } = &state.dialog else { panic!("expected a confirmation") };
-    assert_eq!((*recursive, topics.as_slice()), (false, ["a".to_owned()].as_slice()), "only the topic's own value");
+    let Dialog::ConfirmDelete { topics } = &state.dialog else { panic!("expected a confirmation") };
+    assert_eq!(topics, &["a"], "only the topic's own value");
     state.apply(Action::ConfirmDelete);
     assert_eq!(published(&mut state), [PublishRequest::delete_retained("a")]);
     assert!(state.tree.find("a/b").is_some(), "the subtopics stay");
@@ -445,9 +445,59 @@ fn the_delete_key_always_asks_first() {
     // A level without a value of its own stands for everything below it.
     select(&mut state, "d");
     state.apply(Action::DeleteSelected);
-    assert!(matches!(&state.dialog, Dialog::ConfirmDelete { recursive: true, topics, .. } if topics == &["d/e"]));
+    assert!(matches!(&state.dialog, Dialog::ConfirmDelete { topics } if topics == &["d/e"]));
     state.apply(Action::CloseDialog);
     assert!(state.tree.find("d/e").is_some());
+}
+
+#[test]
+fn search_matches_can_be_deleted_together() {
+    let mut state = state();
+    connect(&mut state);
+    receive(&mut state, &[("home/a/temp", "1"), ("home/b/temp", "2"), ("home/b/temp/raw", "3"), ("office", "4")]);
+    state.apply(Action::DeleteMatches);
+    assert_eq!(notices(&state), ["No matching topic holds a retained message"], "no search, nothing to delete");
+
+    state.search_text = "home/+/temp".into();
+    state.apply(Action::SearchChanged);
+    state.apply(Action::DeleteMatches);
+    assert!(matches!(&state.dialog, Dialog::ConfirmDelete { topics } if topics == &["home/a/temp", "home/b/temp"]));
+    state.apply(Action::ConfirmDelete);
+    let deleted: Vec<_> = published(&mut state).into_iter().map(|request| request.topic).collect();
+    assert_eq!(deleted, ["home/a/temp", "home/b/temp"]);
+    assert!(state.tree.find("home/a").is_none(), "emptied levels go");
+    assert!(state.tree.find("home/b/temp/raw").is_some(), "topics below a match stay");
+    assert!(state.tree.find("office").is_some());
+}
+
+#[test]
+fn subscriptions_change_while_connected() {
+    let mut state = state();
+    state.apply(Action::Subscribe(Subscription::new("extra/#")));
+    assert_eq!(notices(&state), ["!Connect to a broker before subscribing"]);
+    assert!(state.take_commands().is_empty());
+
+    connect(&mut state);
+    state.apply(Action::Subscribe(Subscription::new(" extra/# ")));
+    state.apply(Action::Subscribe(Subscription::new("bad/#/filter")));
+    assert!(notices(&state).iter().any(|notice| notice.contains("'#' is only allowed")), "{:?}", notices(&state));
+    assert!(matches!(&state.take_commands()[..], [Command::Subscribe(added)] if added.filter == "extra/#"));
+    let active = |state: &AppState| {
+        state
+            .profile
+            .as_ref()
+            .unwrap()
+            .subscriptions
+            .iter()
+            .map(|subscription| subscription.filter.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(active(&state), ["#", "$SYS/#", "extra/#"]);
+
+    state.apply(Action::Unsubscribe("$SYS/#".into()));
+    assert!(matches!(&state.take_commands()[..], [Command::Unsubscribe(filter)] if filter == "$SYS/#"));
+    assert_eq!(active(&state), ["#", "extra/#"]);
+    assert_eq!(state.config.profiles[0].subscriptions.len(), 2, "the saved profile keeps its own list");
 }
 
 #[test]
