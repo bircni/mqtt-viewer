@@ -50,16 +50,44 @@ fn text_and_json_decode() {
     assert_eq!(json.json(), Some(&json!({"b": 1, "a": [true, null]})));
     insta::assert_snapshot!(json.display(), @r#"
     {
+      "b": 1,
       "a": [
         true,
         null
-      ],
-      "b": 1
+      ]
     }
     "#);
 
     // A scalar is valid JSON when asked for explicitly.
     assert_eq!(decoder.decode("t", b"21.5", Format::Json).json(), Some(&json!(21.5)));
+}
+
+#[test]
+fn json_is_shown_as_sent() {
+    // Sorting keys, merging duplicates or rewriting numbers would show the user something the device never sent.
+    let decoder = Decoder::new();
+    let payload = br#"{"z":1,"a":{"x":20.50,"x":"again"},"empty":{},"list":[ ],"s":"a,b:{c}\"d"}"#;
+    let decoded = decoder.decode("t", payload, Format::Auto);
+    insta::assert_snapshot!(decoded.display(), @r#"
+    {
+      "z": 1,
+      "a": {
+        "x": 20.50,
+        "x": "again"
+      },
+      "empty": {},
+      "list": [],
+      "s": "a,b:{c}\"d"
+    }
+    "#);
+    // The parsed value still drives charts and keeps the sender's key order.
+    let keys: Vec<_> =
+        decoded.json().and_then(|value| value.as_object()).into_iter().flat_map(|map| map.keys()).collect();
+    assert_eq!(keys, ["z", "a", "empty", "list", "s"]);
+
+    // Base64-wrapped JSON keeps its text as well.
+    let wrapped = decoder.decode("t", b"eyJiIjoxLCJhIjoyfQ==", Format::Base64);
+    assert_eq!(wrapped.display(), "{\n  \"b\": 1,\n  \"a\": 2\n}");
 }
 
 #[test]
@@ -162,15 +190,15 @@ fn sparkplug_payloads_decode_with_the_embedded_schema() {
     assert_eq!(decoded.format, Format::Sparkplug);
     insta::assert_snapshot!(decoded.display(), @r#"
     {
+      "timestamp": 1000,
       "metrics": [
         {
+          "name": "temp",
           "datatype": 10,
-          "doubleValue": 21.5,
-          "name": "temp"
+          "doubleValue": 21.5
         }
       ],
-      "seq": 5,
-      "timestamp": 1000
+      "seq": 5
     }
     "#);
 }

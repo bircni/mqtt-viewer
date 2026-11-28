@@ -439,7 +439,7 @@ fn the_value_view_decodes_caches_and_follows_overrides() {
     let view = state.selected_value().unwrap().clone();
     assert_eq!(view.decoded.format, Format::Json);
     assert!(view.text.contains("\"temp\": 21.5"));
-    assert_eq!(view.chartable, ["/nested/n", "/temp"]);
+    assert_eq!(view.chartable, ["/temp", "/nested/n"], "payload order");
     assert!(!view.truncated);
     assert_eq!(state.selected_value(), Some(&view), "a second call reuses the cached view");
 
@@ -885,7 +885,7 @@ fn the_sample_session_is_consistent() {
     assert_eq!(state.tree.stats().topics, 12);
     assert_eq!(state.connection, ConnectionState::Connected);
     select(&mut state, "home/kitchen/climate");
-    assert_eq!(state.selected_value().unwrap().chartable, ["/humidity", "/ok", "/temperature"]);
+    assert_eq!(state.selected_value().unwrap().chartable, ["/temperature", "/humidity", "/ok"], "payload order");
 }
 
 #[test]

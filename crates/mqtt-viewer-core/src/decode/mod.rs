@@ -3,6 +3,7 @@
 //! Every structured decoder produces a [`serde_json::Value`], so the value view, the diff and the charts share
 //! one code path regardless of the wire format.
 
+mod json;
 mod proto;
 
 use std::fmt::Write as _;
@@ -90,6 +91,9 @@ pub struct Decoded {
     pub format: Format,
     /// The result.
     pub body: Body,
+    /// The JSON text as received, when the payload was JSON text. Shown instead of the parsed value, which
+    /// sorts out duplicate keys and rewrites numbers.
+    source: Option<String>,
 }
 
 impl Decoded {
@@ -98,7 +102,10 @@ impl Decoded {
     pub fn display(&self) -> String {
         match &self.body {
             Body::Text(text) | Body::Hex(text) => text.clone(),
-            Body::Json(value) => serde_json::to_string_pretty(value).unwrap_or_else(|error| error.to_string()),
+            Body::Json(value) => self.source.as_deref().map_or_else(
+                || serde_json::to_string_pretty(value).unwrap_or_else(|error| error.to_string()),
+                json::pretty,
+            ),
             Body::Error(error) => format!("Cannot decode as {}: {error}", self.format.label()),
         }
     }
@@ -164,12 +171,18 @@ impl Decoder {
     #[must_use]
     pub fn decode(&self, topic: &str, payload: &[u8], format: Format) -> Decoded {
         let format = if format == Format::Auto { self.detect(topic, payload) } else { format };
+        let mut source = None;
         let body = match format {
             Format::Auto | Format::Text => match std::str::from_utf8(payload) {
                 Ok(text) => Body::Text(text.to_owned()),
                 Err(error) => Body::Error(format!("not valid UTF-8: {error}")),
             },
-            Format::Json => json_body(serde_json::from_slice::<Value>(payload).map_err(|error| error.to_string())),
+            Format::Json => {
+                let body = json_body(serde_json::from_slice::<Value>(payload).map_err(|error| error.to_string()));
+                // Parsing succeeded, so the bytes are UTF-8.
+                source = matches!(body, Body::Json(_)).then(|| String::from_utf8_lossy(payload).into_owned());
+                body
+            }
             Format::Hex => Body::Hex(hex_dump(payload)),
             Format::Base64 => return self.decode_base64(topic, payload),
             Format::MsgPack => json_body(decode_msgpack(payload)),
@@ -177,12 +190,12 @@ impl Decoder {
             Format::Protobuf => json_body(self.proto.decode(topic, payload)),
             Format::Sparkplug => json_body(self.proto.decode_sparkplug(payload)),
         };
-        Decoded { format, body }
+        Decoded { format, body, source }
     }
 
     fn decode_base64(&self, topic: &str, payload: &[u8]) -> Decoded {
         let trimmed = payload.trim_ascii();
-        let body = match STANDARD.decode(trimmed) {
+        let (body, source) = match STANDARD.decode(trimmed) {
             Ok(inner) => {
                 // Only content sniffing here: the topic's own binding describes the outer payload.
                 let inner_format = match std::str::from_utf8(&inner) {
@@ -190,11 +203,12 @@ impl Decoder {
                     Ok(text) if is_printable(text) => Format::Text,
                     Ok(_) | Err(_) => Format::Hex,
                 };
-                self.decode(topic, &inner, inner_format).body
+                let decoded = self.decode(topic, &inner, inner_format);
+                (decoded.body, decoded.source)
             }
-            Err(error) => Body::Error(error.to_string()),
+            Err(error) => (Body::Error(error.to_string()), None),
         };
-        Decoded { format: Format::Base64, body }
+        Decoded { format: Format::Base64, body, source }
     }
 }
 
