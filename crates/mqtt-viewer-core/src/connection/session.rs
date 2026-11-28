@@ -67,7 +67,7 @@ pub(super) fn open(profile: &ConnectionProfile) -> Result<(Client, EventLoop), S
         (0, ProtocolVersion::V5) => Duration::from_secs(u64::from(u16::MAX)),
         (seconds, _) => Duration::from_secs(u64::from(seconds.max(5))),
     };
-    let credentials = (!profile.username.is_empty()).then(|| (profile.username.clone(), profile.password.clone()));
+    let credentials = credentials(profile);
 
     match profile.protocol {
         ProtocolVersion::V311 => {
@@ -110,6 +110,13 @@ pub(super) fn open(profile: &ConnectionProfile) -> Result<(Client, EventLoop), S
             Ok((Client::V5(client), EventLoop::V5(Box::new(eventloop))))
         }
     }
+}
+
+/// Username and password to send, if any. MQTT 5 allows a password without a username (token logins);
+/// [`ConnectionProfile::validate`] rejects that combination for MQTT 3.1.1.
+fn credentials(profile: &ConnectionProfile) -> Option<(String, String)> {
+    (!profile.username.is_empty() || !profile.password.is_empty())
+        .then(|| (profile.username.clone(), profile.password.clone()))
 }
 
 fn wire_transport(profile: &ConnectionProfile) -> Result<(String, WireTransport), String> {

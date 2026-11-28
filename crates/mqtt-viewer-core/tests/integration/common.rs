@@ -210,6 +210,15 @@ impl TcpProxy {
         packets
     }
 
+    /// The flags byte of the first CONNECT packet a client sent: 0x80 marks a user name, 0x40 a password.
+    pub fn connect_flags(&self) -> Option<u8> {
+        let bytes = self.state.sent.lock().unwrap().clone();
+        // Fixed header 0x10, a remaining length of at most two bytes here, then the protocol name "MQTT"
+        // (2 + 4 bytes), the protocol level and the flags.
+        let length_bytes = if bytes.get(1)? & 0x80 == 0 { 1 } else { 2 };
+        (bytes.first()? >> 4 == 1).then(|| bytes.get(1 + length_bytes + 7).copied()).flatten()
+    }
+
     /// Accepts connections again.
     pub fn restore(&self) {
         self.state.down.store(false, Ordering::SeqCst);

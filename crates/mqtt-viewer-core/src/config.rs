@@ -256,6 +256,9 @@ impl ConnectionProfile {
         if self.port == 0 {
             return Err("port must not be 0".to_owned());
         }
+        if self.protocol == ProtocolVersion::V311 && self.username.is_empty() && !self.password.is_empty() {
+            return Err("MQTT 3.1.1 sends a password only together with a username".to_owned());
+        }
         if self.client_cert_file.is_some() != self.client_key_file.is_some() {
             return Err("client certificate and client key must be set together".to_owned());
         }

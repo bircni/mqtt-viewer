@@ -69,6 +69,14 @@ fn validation_reports_the_first_problem() {
 }
 
 #[test]
+fn mqtt_311_needs_a_user_name_for_a_password() {
+    let password_only = ConnectionProfile { password: "token".into(), ..ConnectionProfile::default() };
+    assert!(password_only.validate().unwrap_err().contains("together with a username"));
+    let v5 = ConnectionProfile { protocol: ProtocolVersion::V5, ..password_only };
+    assert_eq!(v5.validate(), Ok(()));
+}
+
+#[test]
 fn ids_are_unique_hex() {
     let (a, b) = (new_id(), new_id());
     assert_ne!(a, b);

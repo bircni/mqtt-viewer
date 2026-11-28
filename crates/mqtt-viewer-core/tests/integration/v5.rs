@@ -104,6 +104,20 @@ fn session_options_are_accepted() {
 }
 
 #[test]
+fn a_password_is_sent_without_a_user_name() {
+    // Token logins send only a password; MQTT 5 allows that and the password must not be dropped.
+    let broker = TestBroker::start();
+    let proxy = TcpProxy::start(broker.v5);
+    let profile =
+        ConnectionProfile { password: "token".into(), protocol: ProtocolVersion::V5, ..profile_for(proxy.port) };
+    let mut client = Client::connected(&profile);
+    client.send(Command::Disconnect);
+    client.wait_state(&ConnectionState::Disconnected);
+    let flags = proxy.connect_flags().expect("the client sent a CONNECT packet");
+    assert_eq!(flags & 0xc0, 0x40, "password flag without user name flag, got {flags:#04x}");
+}
+
+#[test]
 fn v5_last_will_is_published() {
     let broker = TestBroker::start();
     let proxy = TcpProxy::start(broker.v5);
