@@ -23,17 +23,18 @@ It speaks MQTT 3.1.1 and 5, decodes binary payloads and records and replays sess
 
 | | |
 |---|---|
-| **Topic tree** | Collapsible hierarchy with message and subtopic counts, inline value previews and a flash on activity. Order by name, messages or topics; open new topics automatically down to a chosen depth; pause when it moves too fast. |
-| **Search** | Filter by topic and, optionally, by the latest payload. |
+| **Topic tree** | Collapsible hierarchy under the broker, with message and subtopic counts, inline value previews, the selected topic's path highlighted and a flash on activity. Order by name, messages or topics; open new topics automatically down to a chosen depth; pause when it moves too fast. |
+| **Search** | Filter by topic and, optionally, by the latest payload, or with a topic filter such as `home/+/temperature`. Clear the retained messages of every match at once. |
 | **Keyboard** | Arrow keys, Home and End move through the tree, Space pauses, Delete clears the selected retained message after a confirmation, Ctrl+F (Cmd+F on macOS) jumps to the search. |
-| **Values** | Decoded payload with JSON colouring, a raw hex dump, QoS, retain flag, timestamp and size. Diff against the previous message or any message from the history. |
+| **Values** | Decoded payload with JSON colouring, a raw hex dump, QoS, retain flag, timestamp and size. Payloads are shown as sent, keys in their original order. Diff against the previous message or any message from the history; numeric topics chart their history. |
 | **Decoders** | Text, JSON, hex, Base64, MessagePack, CBOR, Sparkplug B and Protobuf with your own `.proto` files. Detected automatically, overridable per topic. |
 | **Publish** | Raw, JSON, XML or hex payloads with validation, QoS and retain, a list of what you sent and named presets. MQTT 5 user properties, content type, response topic, correlation data and expiry. |
-| **Charts** | Plot any numeric topic or any number inside a JSON payload, with a time window, a fixed range, steps or lines. |
+| **Charts** | Plot any numeric topic or any number inside a JSON payload, side by side or several series in one chart, with a time window, a fixed range, steps or lines. Export a chart as CSV. |
 | **Record and replay** | Record a session to a file, export a topic, its history or a subtree as JSON or CSV, and replay a recording at any speed, optionally under another topic prefix. |
 | **Retained messages** | Delete one, or a whole subtree after a confirmation. |
+| **Broker** | Version, clients, subscriptions and traffic from `$SYS`, and the client ID of the connection. |
 | **History on disk** | Optionally keep received messages in a local database so they are back after a restart. |
-| **Connections** | Saved profiles for `mqtt://`, `mqtts://`, `ws://` and `wss://`, MQTT 3.1.1 and 5, with client certificates, last will, a subscription list and automatic reconnect. |
+| **Connections** | Saved profiles for `mqtt://`, `mqtts://`, `ws://` and `wss://`, MQTT 3.1.1 and 5, with client certificates, last will, a subscription list and automatic reconnect. Connects to the last broker on start; subscriptions can be changed while connected. |
 
 <p align="center">
   <img alt="The connection dialog" src="docs/connect.png" width="49%">
@@ -71,7 +72,8 @@ What a source build needs on Linux and Windows is listed in [CONTRIBUTING.md](CO
 
 ## Getting started
 
-1. Start the app. The connection dialog opens; enter your broker's host and port and press **Connect**.
+1. Start the app. The connection dialog opens; enter your broker's host and port and press **Connect**. Next
+   time the app connects to that broker by itself (Settings › Startup turns this off).
 2. Topics appear as messages arrive. Click one to see its value, history and statistics on the right.
 3. Click a number under **Chart** to plot it, or use the **Publish** panel to send a message to the selected topic.
 

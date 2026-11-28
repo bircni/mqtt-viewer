@@ -1,6 +1,7 @@
 mod app_test;
 mod broker;
 mod chart_test;
+mod fonts_test;
 mod format_test;
 mod forms_test;
 mod highlight_test;

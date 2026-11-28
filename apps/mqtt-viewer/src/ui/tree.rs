@@ -2,12 +2,16 @@
 //! the number of topics.
 
 use eframe::egui::text::{LayoutJob, TextFormat, TextWrapping};
-use eframe::egui::{self, Align, FontId, Rect, Role, ScrollArea, Sense, Stroke, TextStyle, WidgetInfo, pos2, vec2};
+use eframe::egui::{
+    self, Align, FontId, Rect, RichText, Role, ScrollArea, Sense, Stroke, TextStyle, WidgetInfo, pos2, vec2,
+};
 use jiff::Timestamp;
+use mqtt_viewer_core::connection::ConnectionState;
 use mqtt_viewer_core::decode;
 use mqtt_viewer_core::tree::{NodeId, Row, TopicTree};
 
-use super::theme::Palette;
+use super::fonts::{self, icon};
+use super::theme::{self, Palette};
 use crate::format;
 use crate::state::{Action, AppState};
 
@@ -23,30 +27,37 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, actions: &mut Vec<Action>) 
         // Sorting by counts and payload filtering are refreshed on a timer; make sure a frame follows.
         ui.ctx().request_repaint_after(TopicTree::DEFAULT_REFRESH_INTERVAL);
     }
+    if !state.tree.filter().is_empty() {
+        search_bar(ui, state, actions);
+    }
     if total == 0 {
-        ui.centered_and_justified(|ui| {
-            let hint = if state.tree.stats().topics > 0 {
-                "No topic matches the search"
-            } else if state.connection.is_active() {
-                "Waiting for messages…"
-            } else {
-                "Connect to a broker to see its topics"
-            };
-            ui.weak(hint);
-        });
+        let (glyph, hint) = if state.tree.stats().topics > 0 {
+            (icon::MAGNIFYING_GLASS, "No topic matches the search")
+        } else if state.connection.is_active() {
+            (icon::BROADCAST, "Waiting for messages…")
+        } else {
+            (icon::PLUGS, "Connect to a broker to see its topics")
+        };
+        theme::empty_state(ui, glyph, hint, None);
         return;
     }
     let reveal = std::mem::take(&mut state.reveal_selection)
         .then(|| state.selected.and_then(|id| state.tree.cached_rows().iter().position(|row| row.id == id)))
         .flatten();
     let state = &*state;
-    let palette = Palette::of(ui);
     let font = TextStyle::Body.resolve(ui.style());
-    let row_height = ui.fonts_mut(|fonts| fonts.row_height(&font)) + 6.0;
-    let now = Timestamp::now();
+    let style = RowStyle {
+        row_height: ui.fonts_mut(|fonts| fonts.row_height(&font)) + 7.0,
+        font,
+        palette: Palette::of(ui),
+        now: Timestamp::now(),
+        path: selected_path(state),
+    };
     let mut flashing = false;
+    broker_row(ui, state, &style);
 
     ScrollArea::vertical().auto_shrink(false).show_viewport(ui, |ui, viewport| {
+        let row_height = style.row_height;
         #[expect(clippy::cast_precision_loss, reason = "row counts are far below 2^24")]
         ui.set_height(row_height * total as f32);
         let origin = ui.max_rect().min;
@@ -65,7 +76,7 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, actions: &mut Vec<Action>) 
         let last = ((viewport.max.y / row_height).ceil().max(0.0) as usize).min(total);
         for index in first..last {
             let row = state.tree.cached_rows()[index];
-            flashing |= draw_row(ui, state, row, row_rect(index), &font, &palette, now, actions);
+            flashing |= draw_row(ui, state, row, row_rect(index), &style, actions);
         }
     });
     if flashing {
@@ -73,43 +84,106 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, actions: &mut Vec<Action>) 
     }
 }
 
+/// Values every row of a frame shares.
+struct RowStyle {
+    font: FontId,
+    row_height: f32,
+    palette: Palette,
+    now: Timestamp,
+    /// The selected topic's ancestors; their names are highlighted so the selection's path stands out.
+    path: Vec<NodeId>,
+}
+
+fn selected_path(state: &AppState) -> Vec<NodeId> {
+    let mut path = Vec::new();
+    let mut current = state.selected.filter(|id| state.tree.contains(*id)).and_then(|id| state.tree.node(id).parent());
+    while let Some(id) = current.filter(|id| *id != TopicTree::ROOT) {
+        path.push(id);
+        current = state.tree.node(id).parent();
+    }
+    path
+}
+
+/// The broker as the tree's root: where the topics come from and how many there are.
+fn broker_row(ui: &mut egui::Ui, state: &AppState, style: &RowStyle) {
+    let palette = &style.palette;
+    let stats = state.tree.stats();
+    ui.horizontal(|ui| {
+        ui.add_space(8.0);
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(theme::icon(icon::BROADCAST, palette.accent));
+        let host = state.profile.as_ref().map_or("Topics", |profile| profile.host.as_str());
+        ui.label(theme::strong(host, 13.5).color(palette.text_strong));
+        ui.label(
+            RichText::new(format!(
+                "({}, {})",
+                format::plural(stats.topics as u64, "topic"),
+                format::plural(stats.messages, "message")
+            ))
+            .color(palette.text_weak),
+        );
+    });
+}
+
+/// Above the results of a search: what kind of search it is and the bulk action on its matches.
+fn search_bar(ui: &mut egui::Ui, state: &AppState, actions: &mut Vec<Action>) {
+    let palette = Palette::of(ui);
+    ui.horizontal(|ui| {
+        ui.add_space(6.0);
+        ui.label(theme::icon(icon::MAGNIFYING_GLASS, palette.text_weak));
+        let kind = if state.tree.filter().is_wildcard() { "Topic filter" } else { "Search results" };
+        ui.label(RichText::new(kind).color(palette.text_weak));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let enabled = state.connection == ConnectionState::Connected;
+            let delete = ui
+                .add_enabled_ui(enabled, |ui| theme::icon_button(ui, icon::TRASH, "Delete matching…"))
+                .inner
+                .on_hover_text("Clear the retained messages of every matching topic")
+                .on_disabled_hover_text("Connect to a broker to delete retained messages");
+            if delete.clicked() {
+                actions.push(Action::DeleteMatches);
+            }
+        });
+    });
+    ui.add_space(4.0);
+}
+
 /// Draws one row and returns whether it is still fading out its activity highlight.
-#[expect(clippy::too_many_arguments, reason = "per-frame values shared by all rows")]
 fn draw_row(
     ui: &egui::Ui,
     state: &AppState,
     row: Row,
     rect: Rect,
-    font: &FontId,
-    palette: &Palette,
-    now: Timestamp,
+    style: &RowStyle,
     actions: &mut Vec<Action>,
 ) -> bool {
+    let palette = &style.palette;
     let node = state.tree.node(row.id);
     let response = ui.interact(rect, ui.scope_id().with(row.id), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(Role::Button, true, node.name()));
     let selected = state.selected == Some(row.id);
 
     let age = state
-        .activity_age(row.id, now)
+        .activity_age(row.id, style.now)
         .filter(|age| state.config.settings.highlight_activity && (0.0..FLASH_SECS).contains(age));
     if selected {
-        ui.painter().rect_filled(rect, 3.0, palette.selection);
+        ui.painter().rect_filled(rect, 5.0, palette.selection);
+        let marker = Rect::from_min_size(pos2(rect.left(), rect.top() + 4.0), vec2(3.0, rect.height() - 8.0));
+        ui.painter().rect_filled(marker, 1.5, palette.accent);
     } else if let Some(age) = age {
         #[expect(clippy::cast_possible_truncation, reason = "a fraction between 0 and 1")]
         let strength = (1.0 - age / FLASH_SECS).clamp(0.0, 1.0) as f32;
-        ui.painter().rect_filled(rect, 3.0, palette.activity.gamma_multiply(strength));
+        ui.painter().rect_filled(rect, 5.0, palette.activity.gamma_multiply(strength));
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 3.0, ui.visuals().widgets.hovered.weak_bg_fill);
+        ui.painter().rect_filled(rect, 5.0, palette.control);
     }
 
     #[expect(clippy::cast_precision_loss, reason = "topic depth is small")]
-    let left = rect.left() + 4.0 + INDENT * row.depth as f32;
+    let left = rect.left() + 8.0 + INDENT * row.depth as f32;
     let arrow_rect = Rect::from_min_size(pos2(left, rect.top()), vec2(ARROW_WIDTH, rect.height()));
     if row.has_children {
-        // Drawn as a shape: arrow glyphs are not in the built-in font.
         let center = arrow_rect.center();
-        let half = font.size * 0.28;
+        let half = style.font.size * 0.26;
         let points = if row.expanded {
             vec![
                 pos2(center.x - half, center.y - half * 0.6),
@@ -123,41 +197,18 @@ fn draw_row(
                 pos2(center.x + half * 0.8, center.y),
             ]
         };
-        ui.painter().add(egui::Shape::convex_polygon(points, ui.visuals().weak_text_color(), Stroke::NONE));
+        ui.painter().add(egui::Shape::convex_polygon(points, palette.text_weak, Stroke::NONE));
     }
 
-    let text_color = ui.visuals().text_color();
-    let weak = ui.visuals().weak_text_color();
-    let mut job = LayoutJob::default();
-    let name = if node.name().is_empty() { "(empty)" } else { node.name() };
-    job.append(name, 0.0, TextFormat { font_id: font.clone(), color: text_color, ..Default::default() });
-    if let Some(entry) = node.last() {
-        let preview = decode::preview(&entry.payload, PREVIEW_CHARS);
-        job.append(" = ", 0.0, TextFormat { font_id: font.clone(), color: weak, ..Default::default() });
-        job.append(
-            &preview,
-            0.0,
-            TextFormat { font_id: font.clone(), color: text_color.gamma_multiply(0.85), ..Default::default() },
-        );
-    }
-    if row.has_children {
-        let summary = format!(
-            "  ({}, {})",
-            format::plural(node.subtree_topics() as u64, "topic"),
-            format::plural(node.subtree_messages(), "message")
-        );
-        job.append(&summary, 0.0, TextFormat { font_id: font.clone(), color: weak, ..Default::default() });
-    }
-    let text_left = arrow_rect.right();
-    job.wrap = TextWrapping {
-        max_width: (rect.right() - text_left - 4.0).max(0.0),
-        max_rows: 1,
-        break_anywhere: true,
-        ..Default::default()
-    };
-    let galley = ui.painter().layout_job(job);
-    let text_pos = pos2(text_left, rect.center().y - galley.size().y / 2.0);
-    ui.painter().galley(text_pos, galley, text_color);
+    let on_path = style.path.contains(&row.id);
+    draw_label(
+        ui,
+        state,
+        row,
+        Rect::from_x_y_ranges(arrow_rect.right()..=rect.right(), rect.y_range()),
+        style,
+        on_path,
+    );
 
     let on_arrow = response.interact_pointer_pos().is_some_and(|pos| arrow_rect.contains(pos));
     if response.clicked() {
@@ -175,6 +226,50 @@ fn draw_row(
         response.scroll_to_me(Some(Align::Center));
     }
     age.is_some()
+}
+
+/// Draws `name = value (n topics, m messages)` into `rect`, the name on a chip when it is on the selection's
+/// path.
+fn draw_label(ui: &egui::Ui, state: &AppState, row: Row, rect: Rect, style: &RowStyle, on_path: bool) {
+    let palette = &style.palette;
+    let font = &style.font;
+    let format = |font_id: FontId, color| TextFormat { font_id, color, valign: Align::Center, ..Default::default() };
+    let node = state.tree.node(row.id);
+    let painter = ui.painter();
+
+    let name = if node.name().is_empty() { "(empty)" } else { node.name() };
+    let name_font = if row.has_children || on_path { fonts::semibold(font.size) } else { fonts::medium(font.size) };
+    let name_galley = painter.layout_no_wrap(name.to_owned(), name_font, palette.text_strong);
+    let name_pos = pos2(rect.left(), rect.center().y - name_galley.size().y / 2.0);
+    if on_path {
+        let chip = Rect::from_min_size(name_pos, name_galley.size()).expand2(vec2(5.0, 1.5));
+        painter.rect_filled(chip, 5.0, palette.selection);
+    }
+    let after_name = name_pos.x + name_galley.size().x;
+    painter.galley(name_pos, name_galley, palette.text_strong);
+
+    let mut job = LayoutJob::default();
+    if let Some(entry) = node.last() {
+        job.append("=", 6.0, format(font.clone(), palette.text_weak));
+        let preview = decode::preview(&entry.payload, PREVIEW_CHARS);
+        job.append(&preview, 6.0, format(font.clone(), palette.text));
+    }
+    if row.has_children {
+        let summary = format!(
+            "({}, {})",
+            format::plural(node.subtree_topics() as u64, "topic"),
+            format::plural(node.subtree_messages(), "message")
+        );
+        job.append(&summary, 6.0, format(FontId::proportional(font.size - 1.0), palette.text_weak));
+    }
+    job.wrap = TextWrapping {
+        max_width: (rect.right() - after_name - 8.0).max(0.0),
+        max_rows: 1,
+        break_anywhere: true,
+        ..Default::default()
+    };
+    let galley = painter.layout_job(job);
+    painter.galley(pos2(after_name, rect.center().y - galley.size().y / 2.0), galley, palette.text);
 }
 
 fn context_menu(ui: &mut egui::Ui, state: &AppState, id: NodeId, has_children: bool, actions: &mut Vec<Action>) {

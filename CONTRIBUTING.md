@@ -6,6 +6,7 @@
 |---|---|
 | `crates/mqtt-viewer-core` | Connection worker, topic tree, decoders, recording, history store. No UI code. |
 | `apps/mqtt-viewer` | The egui application. `state.rs` holds all behaviour; `ui/` only draws it. |
+| `apps/mqtt-viewer/fonts` | The bundled text and icon fonts with their licences. |
 | `assets/` | The icon files and what the packages need: the Linux desktop entry and the macOS `Info.plist`. |
 | `scripts/` | Release, packaging, icon and screenshot helpers. |
 | `docs/` | Screenshots used by the README. |
@@ -60,8 +61,9 @@ matches outside tests). Use `#[expect(..., reason = "...")]` where an exception 
 - **Integration tests** (`crates/mqtt-viewer-core/tests/integration`) start an in-process broker on a free port,
   plus a TLS-terminating proxy and a throw-away certificate authority where needed. No external services.
 - **UI tests** (`apps/mqtt-viewer/src/tests/ui_test.rs`) drive the real drawing code through its accessibility
-  tree with `egui_kittest`. Every input widget needs an accessible name, and every glyph must exist in egui's
-  built-in font; the tests fail otherwise.
+  tree with `egui_kittest`. Every input widget needs an accessible name, and every glyph must exist in the
+  bundled fonts (Inter, the cut-down Phosphor icons, then egui's own); the tests fail otherwise. Adding an icon
+  is described in `apps/mqtt-viewer/fonts/README.md`.
 - **End-to-end tests** (`app_test.rs`) run the whole application against the in-process broker.
 
 File dialogs go through the `FilePicker` trait, so tests answer them with a fixed path instead of opening one.

@@ -31,6 +31,12 @@ fn click(harness: &mut Harness<'static, AppState>, label: &str) {
     harness.run_steps(8);
 }
 
+/// Opens or closes a sidebar section by its header.
+fn toggle_section(harness: &mut Harness<'static, AppState>, title: &str) {
+    harness.get_by_role_and_label(Role::DisclosureTriangle, title).click();
+    harness.run_steps(8);
+}
+
 fn input<'a>(harness: &'a Harness<'static, AppState>, label: &'a str) -> egui_kittest::Node<'a> {
     harness.get_by_role_and_label(Role::TextInput, label)
 }
@@ -78,6 +84,25 @@ fn the_connect_dialog_manages_profiles_and_cancels() {
 }
 
 #[test]
+fn a_saved_connection_connects_on_double_click() {
+    let mut state = state();
+    state.apply(Action::OpenConnectDialog);
+    state.apply(Action::SaveProfile);
+    // A double-click must fit into 0.3 s, longer than the default step of a quarter second.
+    let mut harness = Harness::builder()
+        .with_size(vec2(1280.0, 800.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_ui_state(|ui, state: &mut AppState| crate::ui::root(ui, state), state);
+    harness.run_steps(8);
+    harness.get_by_role_and_label(Role::Button, "New connection").click();
+    harness.step();
+    harness.get_by_role_and_label(Role::Button, "New connection").click();
+    harness.run_steps(4);
+    assert_eq!(harness.state().dialog, Dialog::None);
+    assert!(matches!(&harness.state_mut().take_commands()[..], [Command::Connect(_)]));
+}
+
+#[test]
 fn every_profile_section_renders_for_tls_websocket_and_mqtt5() {
     let mut state = state();
     state.apply(Action::OpenConnectDialog);
@@ -95,14 +120,11 @@ fn every_profile_section_renders_for_tls_websocket_and_mqtt5() {
     harness.get_by_label("host must not be empty");
     click(&mut harness, "Session");
     harness.get_by_label("Session expiry (s)");
-    // Close it again: sections scrolled out of view are not part of the accessibility tree.
-    click(&mut harness, "Session");
-    click(&mut harness, "Subscriptions");
     click(&mut harness, "Last will");
     harness.get_by_label("Will topic");
-    click(&mut harness, "Last will");
-    click(&mut harness, "Subscriptions");
+    click(&mut harness, "TLS");
     harness.get_by_label("Any certificate is accepted: the connection can be intercepted.");
+    click(&mut harness, "Subscriptions");
     click(&mut harness, "Add subscription");
     let Dialog::Connect(dialog) = &harness.state().dialog else { panic!("dialog closed") };
     assert_eq!(dialog.draft.subscriptions.len(), 3);
@@ -148,7 +170,7 @@ fn the_sidebar_shows_the_selected_value_in_all_modes() {
     click(&mut harness, "Raw");
     assert_eq!(harness.state().value_mode, ValueMode::Raw);
     click(&mut harness, "Diff");
-    harness.get_by_label("Compared with the previous message");
+    harness.get_by_label("Compared with the previous message:");
     click(&mut harness, "Decoded");
 
     click(&mut harness, "/temperature");
@@ -163,13 +185,14 @@ fn the_sidebar_shows_the_selected_value_in_all_modes() {
     click(&mut harness, "History");
     harness.get_by_label("30 stored of 30 received");
     // Make room: sections scrolled out of view are not part of the accessibility tree.
-    for section in ["History", "Value"] {
-        click(&mut harness, section);
+    for section in ["History", "Value", "Publish"] {
+        toggle_section(&mut harness, section);
     }
     click(&mut harness, "Stats");
     harness.get_by_label("Selected: messages");
     click(&mut harness, "Stats");
-    click(&mut harness, "Value");
+    toggle_section(&mut harness, "Value");
+    toggle_section(&mut harness, "Publish");
 
     click(&mut harness, "Copy topic");
     click(&mut harness, "Delete");
@@ -208,6 +231,81 @@ fn binary_values_and_mqtt5_properties_render() {
         .apply(Action::SetDecoder { pattern: "bin".into(), format: mqtt_viewer_core::decode::Format::Json });
     harness.run_steps(3);
     harness.get_by_label_contains("Cannot decode as JSON");
+}
+
+#[test]
+fn a_topic_filter_search_deletes_its_matches() {
+    let mut harness = harness(populated());
+    input(&harness, "Search topics").focus();
+    harness.run_steps(2);
+    input(&harness, "Search topics").type_text("home/+/light");
+    harness.run_steps(3);
+    harness.get_by_label("Topic filter");
+    click(&mut harness, "Delete matching…");
+    let Dialog::ConfirmDelete { topics } = &harness.state().dialog else { panic!("expected a confirmation") };
+    assert_eq!(topics.len(), 4, "{topics:?}");
+    harness.get_by_label("This clears the retained message of 4 topics on the broker:");
+    click(&mut harness, "Delete");
+    let deleted = harness.state_mut().take_commands().len();
+    assert_eq!(deleted, 4);
+    assert!(harness.state().tree.find("home/kitchen/light").is_none());
+    assert!(harness.state().tree.find("home/kitchen/climate").is_some());
+}
+
+#[test]
+fn subscriptions_are_edited_while_connected() {
+    let mut harness = harness(populated());
+    click(&mut harness, "Subscriptions");
+    harness.get_by_label("$SYS/#");
+    click(&mut harness, "Unsubscribe $SYS/#");
+    assert!(matches!(&harness.state_mut().take_commands()[..], [Command::Unsubscribe(filter)] if filter == "$SYS/#"));
+
+    input(&harness, "New subscription").focus();
+    harness.run_steps(2);
+    input(&harness, "New subscription").type_text("extra/+");
+    harness.run_steps(2);
+    click(&mut harness, "QoS 1");
+    click(&mut harness, "Subscribe");
+    let commands = harness.state_mut().take_commands();
+    assert!(
+        matches!(&commands[..], [Command::Subscribe(added)] if added.filter == "extra/+" && added.qos.level() == 1),
+        "{commands:?}"
+    );
+    harness.get_by_label("extra/+");
+}
+
+#[test]
+fn charts_combine_export_and_clear_from_the_panel() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = populated();
+    state.files = Box::new(FakePicker(Some(directory.path().to_path_buf())));
+    state.apply(Action::AddChart { topic: "home/kitchen/climate".into(), pointer: "/temperature".into() });
+    state.apply(Action::AddChart { topic: "home/garage/climate".into(), pointer: "/temperature".into() });
+    let mut harness = harness(state);
+    let combine = harness.get_all_by_label("Combine").next().unwrap();
+    combine.click();
+    harness.run_steps(4);
+    click(&mut harness, "Into home/garage/climate /temperature");
+    let plots: Vec<_> = harness.state().charts.iter().map(|chart| chart.plot).collect();
+    assert_eq!(plots[0], plots[1], "both series share a plot");
+
+    click(&mut harness, "Export CSV");
+    let csv = std::fs::read_to_string(directory.path().join("chart.csv")).unwrap();
+    assert_eq!(csv.lines().count(), 61, "a header and 30 points per series");
+
+    click(&mut harness, "Show separately");
+    assert_ne!(harness.state().charts[0].plot, harness.state().charts[1].plot);
+    click(&mut harness, "Remove all charts");
+    assert_eq!(harness.state().charts.len(), 0);
+}
+
+#[test]
+fn stats_show_the_connection_and_the_broker() {
+    let mut harness = harness(populated());
+    click(&mut harness, "Stats");
+    harness.get_by_label("Client ID");
+    harness.get_by_label("MQTT 3.1.1");
+    harness.get_by_label("86400 seconds");
 }
 
 #[test]
@@ -274,6 +372,8 @@ fn publishing_from_the_panel() {
     harness.state_mut().publish.payload = "{".into();
     harness.run_steps(3);
     harness.get_by_label_contains("invalid JSON");
+    // Make room: widgets scrolled out of view are not part of the accessibility tree.
+    toggle_section(&mut harness, "Topic");
     click(&mut harness, "MQTT 5 properties");
     click(&mut harness, "Add property");
     assert_eq!(harness.state().publish.user_properties.len(), 1);
@@ -287,17 +387,22 @@ fn settings_can_be_changed_and_saved() {
     assert!(matches!(harness.state().dialog, Dialog::Settings(_)));
     click(&mut harness, "Dark");
     click(&mut harness, "Most topics");
+    click(&mut harness, "Connect to the last used broker when the app starts");
+    click(&mut harness, "Storage");
     click(&mut harness, "Store received messages in a local database");
     click(&mut harness, "Save");
     let settings = &harness.state().config.settings;
     assert_eq!(settings.theme, mqtt_viewer_core::config::Theme::Dark);
     assert_eq!(settings.tree_order, mqtt_viewer_core::config::TreeOrder::Topics);
     assert!(settings.persist_history);
+    assert!(!settings.connect_on_start);
     assert_eq!(harness.state().dialog, Dialog::None);
 
     click(&mut harness, "Settings");
     harness.get_by_label(concat!("MQTT Viewer ", env!("CARGO_PKG_VERSION")));
+    click(&mut harness, "General");
     harness.get_by_role_and_label(Role::SpinButton, "Expand new topics");
+    click(&mut harness, "Storage");
     click(&mut harness, "Clear stored history");
     click(&mut harness, "Cancel");
     assert_eq!(harness.state().dialog, Dialog::None);
@@ -364,7 +469,7 @@ fn toolbar_actions_and_notices() {
     let mut harness = harness(state);
     harness.get_by_label("Something happened");
     harness.get_by_label("Something broke");
-    harness.get_all_by_label("×").next().unwrap().click();
+    harness.get_all_by_label("Dismiss").next().unwrap().click();
     harness.run_steps(3);
     assert_eq!(harness.state().notices.len(), 1);
 
@@ -511,7 +616,7 @@ fn presets_and_sent_messages_load_back_through_their_menus() {
 
     // Deleting a preset from the menu.
     click(&mut harness, "Presets");
-    harness.get_all_by_label("×").last().unwrap().click();
+    harness.get_by_label("Delete preset").click();
     harness.run_steps(8);
     assert_eq!(harness.state().config.publish_presets.len(), 0);
 }
@@ -579,6 +684,7 @@ fn file_dialogs_choose_certificates_and_schemas() {
     state.files = Box::new(FakePicker(Some(proto.clone())));
     state.apply(Action::OpenSettings);
     let mut harness = harness(state);
+    click(&mut harness, "Protobuf");
     click(&mut harness, "Add .proto file…");
     assert_eq!(harness.state().config.proto_files, [proto]);
     assert_eq!(harness.state().decoder.registry().message_types(), ["acme.Reading"]);
@@ -591,7 +697,7 @@ fn file_dialogs_choose_certificates_and_schemas() {
         dialog.draft.transport = mqtt_viewer_core::config::Transport::Tls;
     }
     harness.run_steps(8);
-    click(&mut harness, "Subscriptions");
+    click(&mut harness, "TLS");
     click(&mut harness, "Choose CA certificate");
     let Dialog::Connect(dialog) = &harness.state().dialog else { panic!("dialog closed") };
     assert_eq!(dialog.draft.ca_file.as_ref(), Some(&certificate));

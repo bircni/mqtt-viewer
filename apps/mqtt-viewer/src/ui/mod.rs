@@ -1,14 +1,16 @@
 //! Drawing code. Everything here reads [`AppState`] and reports input as [`Action`]s; no behaviour lives here.
 
 mod charts;
+mod connect;
 mod dialogs;
+pub(crate) mod fonts;
 mod native_picker;
 mod sidebar;
 mod theme;
 mod toolbar;
 mod tree;
 
-use eframe::egui::{self, Align2, Key, Modifiers, Panel, RichText};
+use eframe::egui::{self, Align2, Key, Margin, Modifiers, Panel, RichText};
 
 pub use self::native_picker::NativePicker;
 use crate::state::{Action, AppState, Dialog, Navigate};
@@ -19,21 +21,25 @@ pub fn root(ui: &mut egui::Ui, state: &mut AppState) {
     let mut actions = Vec::new();
     keyboard(ui, state, &mut actions);
 
-    Panel::top("toolbar").show(ui, |ui| toolbar::top(ui, state, &mut actions));
-    Panel::bottom("status").show(ui, |ui| toolbar::status(ui, state));
+    let bar = theme::bar_frame(ui);
+    Panel::top("toolbar").frame(bar).show(ui, |ui| toolbar::top(ui, state, &mut actions));
+    let status = theme::panel_frame(ui, Margin::symmetric(12, 4));
+    Panel::bottom("status").frame(status).show(ui, |ui| toolbar::status(ui, state));
     Panel::right("sidebar")
+        .frame(theme::panel_frame(ui, Margin::same(10)))
         .resizable(true)
         .default_size(460.0)
         .size_range(320.0..=900.0)
         .show(ui, |ui| sidebar::show(ui, state, &mut actions));
     if !state.charts.is_empty() {
         Panel::bottom("charts")
+            .frame(theme::panel_frame(ui, Margin::symmetric(12, 8)))
             .resizable(true)
-            .default_size(220.0)
-            .size_range(120.0..=600.0)
+            .default_size(290.0)
+            .size_range(160.0..=700.0)
             .show(ui, |ui| charts::show(ui, state, &mut actions));
     }
-    egui::CentralPanel::default().show(ui, |ui| tree::show(ui, state, &mut actions));
+    egui::CentralPanel::default().frame(theme::base_frame(ui)).show(ui, |ui| tree::show(ui, state, &mut actions));
 
     dialogs::show(ui.ctx(), state, &mut actions);
     notices(ui.ctx(), state, &mut actions);
@@ -91,11 +97,14 @@ fn notices(ctx: &egui::Context, state: &AppState, actions: &mut Vec<Action>) {
         ui.set_max_width(420.0);
         let palette = theme::Palette::of(ui);
         for (index, notice) in state.notices.iter().enumerate().rev().take(5) {
+            let marker = if notice.is_error { palette.error } else { palette.accent };
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    let (bar, _) = ui.allocate_exact_size(egui::vec2(3.0, 18.0), egui::Sense::hover());
+                    ui.painter().rect_filled(bar, 2.0, marker);
                     let text = RichText::new(&notice.text);
                     ui.add(egui::Label::new(if notice.is_error { text.color(palette.error) } else { text }).wrap());
-                    if ui.small_button("×").on_hover_text("Dismiss").clicked() {
+                    if theme::icon_only(ui, fonts::icon::X, "Dismiss").clicked() {
                         actions.push(Action::DismissNotice(index));
                     }
                 });
