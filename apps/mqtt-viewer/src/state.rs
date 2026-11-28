@@ -233,6 +233,24 @@ pub enum Action {
     },
     /// Remove a chart.
     RemoveChart(usize),
+    /// Draw the series at `from` in the plot of the series at `into`.
+    CombineCharts {
+        /// Series to move.
+        from: usize,
+        /// Series whose plot it joins.
+        into: usize,
+    },
+    /// Give the series at this index a plot of its own again.
+    SeparateChart(usize),
+    /// Remove every chart.
+    ClearCharts,
+    /// Write the points of one plot to a CSV file.
+    ExportPlot {
+        /// The plot.
+        plot: u64,
+        /// Destination.
+        path: PathBuf,
+    },
     /// Start recording received messages to a file.
     StartRecording(PathBuf),
     /// Stop the running recording.
@@ -348,6 +366,7 @@ pub struct AppState {
     /// Set when the search box should take the keyboard focus on the next frame.
     pub focus_search: bool,
     commands: Vec<Command>,
+    next_plot: u64,
 }
 
 impl AppState {
@@ -386,6 +405,7 @@ impl AppState {
             reveal_selection: false,
             focus_search: false,
             commands: Vec::new(),
+            next_plot: 0,
         };
         state.tree.set_order(state.config.settings.tree_order);
         state.tree.set_auto_expand(state.config.settings.auto_expand_depth);
@@ -875,6 +895,27 @@ impl AppState {
                     self.charts.remove(index);
                 }
             }
+            Action::CombineCharts { from, into } => {
+                if let Some(plot) = self.charts.get(into).map(|chart| chart.plot)
+                    && let Some(chart) = self.charts.get_mut(from)
+                {
+                    chart.plot = plot;
+                }
+            }
+            Action::SeparateChart(index) => {
+                let plot = self.new_plot();
+                if let Some(chart) = self.charts.get_mut(index) {
+                    chart.plot = plot;
+                }
+            }
+            Action::ClearCharts => self.charts.clear(),
+            Action::ExportPlot { plot, path } => {
+                let text = crate::chart::to_csv(self.charts.iter().filter(|chart| chart.plot == plot));
+                match std::fs::write(&path, text) {
+                    Ok(()) => self.info(format!("Chart exported to {}", path.display())),
+                    Err(error) => self.error(format!("Export to {} failed: {error}", path.display())),
+                }
+            }
             Action::StartRecording(path) => match Recorder::create(&path) {
                 Ok(recorder) => {
                     self.recorder = Some(recorder);
@@ -1013,8 +1054,10 @@ impl AppState {
             chart.points.clear();
         }
         self.restore_history(&profile);
-        self.profile = Some(profile.clone());
-        self.commands.push(Command::Connect(Box::new(profile)));
+        // A blank client ID is generated once per connection, so it can be shown and survives reconnects.
+        let session = ConnectionProfile { client_id: profile.effective_client_id(), ..profile };
+        self.profile = Some(session.clone());
+        self.commands.push(Command::Connect(Box::new(session)));
     }
 
     /// Fills the tree with what the database holds for `profile`.
@@ -1094,6 +1137,7 @@ impl AppState {
             return;
         }
         let mut chart = Chart::new(topic, pointer);
+        chart.plot = self.new_plot();
         if let Some(node) = self.tree.find(&chart.topic) {
             let format = self.format_for(&chart.topic);
             for entry in self.tree.node(node).history() {
@@ -1102,6 +1146,11 @@ impl AppState {
             }
         }
         self.charts.push(chart);
+    }
+
+    const fn new_plot(&mut self) -> u64 {
+        self.next_plot += 1;
+        self.next_plot
     }
 
     fn navigate(&mut self, direction: Navigate) {

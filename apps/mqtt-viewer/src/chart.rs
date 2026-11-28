@@ -1,6 +1,7 @@
 //! Numeric time series shown in the chart panel.
 
 use std::collections::VecDeque;
+use std::fmt::Write as _;
 
 use jiff::Timestamp;
 use mqtt_viewer_core::decode::Decoded;
@@ -26,6 +27,9 @@ pub struct Chart {
     pub window_secs: Option<f64>,
     /// Fixed value range; `None` scales to the data.
     pub y_range: Option<(f64, f64)>,
+    /// The plot this series is drawn in. Series sharing a plot are drawn together; the first of them carries
+    /// the plot's settings (window, steps, range).
+    pub plot: u64,
 }
 
 impl Chart {
@@ -40,6 +44,7 @@ impl Chart {
             stepped: false,
             window_secs: None,
             y_range: None,
+            plot: 0,
         }
     }
 
@@ -92,4 +97,26 @@ impl Chart {
     pub fn latest(&self) -> Option<f64> {
         self.points.back().map(|point| point[1])
     }
+}
+
+/// The points of `charts` as CSV: one row per point with its time, series and value.
+#[must_use]
+pub fn to_csv<'a>(charts: impl IntoIterator<Item = &'a Chart>) -> String {
+    let mut out = String::from("timestamp,topic,pointer,value\n");
+    for chart in charts {
+        for [seconds, value] in &chart.points {
+            #[expect(clippy::cast_possible_truncation, reason = "plot coordinates are far inside the i64 range")]
+            let at = Timestamp::from_millisecond((seconds * 1000.0).round() as i64)
+                .map_or_else(|_| seconds.to_string(), |at| at.to_string());
+            let field = |text: &str| {
+                if text.contains([',', '"', '\n']) {
+                    format!("\"{}\"", text.replace('"', "\"\""))
+                } else {
+                    text.to_owned()
+                }
+            };
+            let _ = writeln!(out, "{at},{},{},{value}", field(&chart.topic), field(&chart.pointer));
+        }
+    }
+    out
 }

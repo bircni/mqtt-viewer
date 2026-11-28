@@ -4,6 +4,7 @@
 //! decoding ([`decode`]), recording and replay ([`record`]) and the optional history database ([`store`]).
 //! Nothing in here depends on a UI toolkit.
 
+pub mod broker;
 pub mod config;
 pub mod connection;
 pub mod decode;

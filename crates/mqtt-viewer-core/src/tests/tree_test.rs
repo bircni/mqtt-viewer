@@ -456,3 +456,16 @@ fn count_driven_reordering_is_throttled() {
     tree.insert(Message::new("x", "v"));
     assert!(tree.rows_pending(), "clearing keeps the interval");
 }
+
+#[test]
+fn broker_information_comes_from_sys_topics() {
+    let mut tree = TopicTree::default();
+    assert!(crate::broker::info(&tree).is_empty(), "a broker without $SYS reports nothing");
+    tree.insert(Message::new("$SYS/broker/uptime", "86400 seconds"));
+    tree.insert(Message::new("$SYS/broker/version", "mosquitto version 2.0.18"));
+    tree.insert(Message::new("$SYS/broker/clients/other", "7"));
+    assert_eq!(
+        crate::broker::info(&tree),
+        [("Version", "mosquitto version 2.0.18".to_owned()), ("Uptime", "86400 seconds".to_owned())]
+    );
+}

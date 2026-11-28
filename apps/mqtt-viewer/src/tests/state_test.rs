@@ -602,6 +602,44 @@ fn the_diff_compares_with_the_previous_or_a_chosen_message() {
 }
 
 #[test]
+fn charts_combine_separate_export_and_clear() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = state();
+    receive(&mut state, &[("a", "1"), ("b", "2")]);
+    state.apply(Action::AddChart { topic: "a".into(), pointer: String::new() });
+    state.apply(Action::AddChart { topic: "b".into(), pointer: String::new() });
+    assert_ne!(state.charts[0].plot, state.charts[1].plot, "every new chart gets its own plot");
+
+    state.apply(Action::CombineCharts { from: 1, into: 0 });
+    assert_eq!(state.charts[0].plot, state.charts[1].plot);
+    let plot = state.charts[0].plot;
+    let path = dir.path().join("chart.csv");
+    state.apply(Action::ExportPlot { plot, path: path.clone() });
+    let csv = std::fs::read_to_string(&path).unwrap();
+    let lines: Vec<_> = csv.lines().collect();
+    assert_eq!(lines[0], "timestamp,topic,pointer,value");
+    assert_eq!(lines.len(), 3, "{csv}");
+    assert!(lines[1].ends_with(",a,,1") && lines[2].ends_with(",b,,2"), "{csv}");
+
+    state.apply(Action::SeparateChart(1));
+    assert_ne!(state.charts[0].plot, state.charts[1].plot);
+    state.apply(Action::CombineCharts { from: 7, into: 0 });
+    state.apply(Action::ExportPlot { plot, path: dir.path().join("missing/chart.csv") });
+    assert!(notices(&state).last().unwrap().starts_with("!Export to"), "{:?}", notices(&state));
+    state.apply(Action::ClearCharts);
+    assert_eq!(state.charts.len(), 0);
+}
+
+#[test]
+fn a_blank_client_id_is_fixed_for_the_connection() {
+    let mut state = state();
+    connect(&mut state);
+    let client_id = state.profile.as_ref().unwrap().client_id.clone();
+    assert!(client_id.starts_with("mqtt-viewer-"), "{client_id}");
+    assert!(state.config.profiles[0].client_id.is_empty(), "the saved profile still generates one per connection");
+}
+
+#[test]
 fn charts_backfill_from_history_and_follow_live_values() {
     let mut state = state();
     receive(&mut state, &[("env", r#"{"t":1}"#), ("env", r#"{"t":2}"#), ("plain", "5")]);
